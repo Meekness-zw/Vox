@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* ----------------------------------------------------------------------------
+   Vox design tokens
+---------------------------------------------------------------------------- */
+:root {
+  --background: #ffffff;
+  --foreground: #0b0b13;
+
+  --card: #ffffff;
+  --card-foreground: #0b0b13;
+
+  --muted: #f4f4f7;
+  --muted-foreground: #62626f;
+
+  --border: #e7e7ee;
+  --input: #e7e7ee;
+  --ring: #6d4aff;
+
+  --primary: #6d4aff;
+  --primary-foreground: #ffffff;
+
+  --accent: #f0ecff;
+  --accent-foreground: #4b2fd6;
+
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #08080c;
+  --foreground: #ececf2;
+
+  --card: #101018;
+  --card-foreground: #ececf2;
+
+  --muted: #16161f;
+  --muted-foreground: #9a9aa8;
+
+  --border: #23232f;
+  --input: #23232f;
+  --ring: #8b6dff;
+
+  --primary: #8b6dff;
+  --primary-foreground: #0b0b13;
+
+  --accent: #1a1530;
+  --accent-foreground: #c9bdff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-sm: calc(var(--radius) - 0.4rem);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Utility helpers used across the app */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--border) 60%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--border) 60%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+@keyframes vox-pulse {
+  0%, 100% { transform: scaleY(0.4); opacity: 0.6; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
