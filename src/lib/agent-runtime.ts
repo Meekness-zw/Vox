@@ -120,37 +120,37 @@ function keywordMatch(input: string, agentName: string): string | null {
     );
 
   if (!input) {
-    return `Hi! I'm ${agentName}. I can help with our services, hours, pricing, or booking an appointment. What can I do for you?`;
+    return `Hi there, I'm ${agentName}! I can help with our services, hours, pricing, or getting you booked in. What can I do for you?`;
   }
   if (match("hour", "open", "close", "when are you")) {
-    return "We're open Monday to Friday 8am to 6pm, and Saturday 9am to 1pm. We're closed Sundays. Would you like to book a time?";
+    return "Sure! We're open Monday through Friday, eight to six, and Saturdays nine to one. We're closed on Sundays. Want me to find you a time?";
   }
   if (match("clean", "cleaning")) {
-    return "A routine cleaning is $120 and takes about 45 minutes. I have openings in the next few days. Would you like me to book one for you?";
+    return "A cleaning's a hundred and twenty dollars, and it takes about forty-five minutes. I've actually got a few openings this week — would you like me to grab one for you?";
   }
   if (match("whiten", "whitening")) {
-    return "In-office teeth whitening is $349, and we offer financing. Shall I get you scheduled?";
+    return "Of course! In-office whitening is three forty-nine, and we do offer financing if that helps. Want me to get you scheduled?";
   }
   if (match("insurance", "delta", "cigna", "aetna", "metlife", "cover")) {
-    return "We accept Delta Dental, Cigna, Aetna, and MetLife, and we can verify your coverage before the visit. What's your provider?";
+    return "Good news — we take Delta Dental, Cigna, Aetna, and MetLife, and we're happy to check your coverage before you come in. Who's your provider?";
   }
   if (match("price", "cost", "how much", "fee")) {
-    return "A new patient exam with X-rays is $89, cleanings are $120, and fillings start at $180. Is there anything specific you'd like pricing on?";
+    return "Happy to help! A new-patient exam with X-rays is eighty-nine dollars, cleanings are a hundred and twenty, and fillings start at one eighty. Is there something specific you had in mind?";
   }
   if (match("book", "appointment", "schedule", "available", "slot")) {
-    return "I'd be happy to book that. We usually have availability within two to three days during business hours. What day works best, and may I get your name and phone number?";
+    return "Absolutely, I can set that up. We've usually got openings within a couple of days. What day works best for you — and can I grab your name and number?";
   }
   if (match("park", "parking", "address", "location", "where are you")) {
-    return "We're at 1200 Market Street in San Francisco, with free validated parking in the building garage.";
+    return "We're right at twelve hundred Market Street in San Francisco, and there's free validated parking in the building garage.";
   }
   if (match("emergency", "pain", "urgent", "hurts")) {
-    return "I'm sorry you're in pain. We usually keep same-day emergency slots open. Can I get your name and number so we can get you seen today?";
+    return "Oh no, I'm so sorry you're hurting. We keep same-day emergency slots open — let me grab your name and number and we'll get you seen today, okay?";
   }
   if (match("bye", "goodbye", "that's all", "nothing else", "thank you")) {
-    return "You're very welcome. Thanks for calling Bright Smile Dental, and have a great day!";
+    return "You're so welcome! Thanks for calling Bright Smile Dental — take care and have a great day.";
   }
   if (match("hi", "hello", "hey", "good morning", "good afternoon")) {
-    return `Hi there! I'm ${agentName}. I can help with services, pricing, hours, or booking a visit. How can I help?`;
+    return `Hey there! I'm ${agentName}. I can help with services, pricing, hours, or booking you a visit — what can I do for you?`;
   }
   return null;
 }
