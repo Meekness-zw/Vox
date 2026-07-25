@@ -8,7 +8,7 @@ import { getCalendarConnection, getCrmConnection, getOrCreateWidgetConfig, listA
 import { hasCalendarCredentials } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
-import { connectCrm, createInvitation } from "./actions";
+import { connectCrm, createInvitation, revokeInvitation, saveWidgetSettings } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -77,8 +77,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 </Badge>
               </div>
             ))}
-            {invitations.filter((i) => !i.accepted_at).map((i) => <div key={String(i.id)} className="flex items-center justify-between px-5 py-3 text-sm">
-              <span>{String(i.email)} · pending {String(i.role)}</span><Badge variant="muted">Expires {new Date(i.expires_at as Date).toLocaleDateString()}</Badge>
+            {invitations.filter((i) => !i.accepted_at && !i.revoked_at).map((i) => <div key={String(i.id)} className="flex items-center justify-between px-5 py-3 text-sm">
+              <span>{String(i.email)} · pending {String(i.role)}</span><form action={revokeInvitation} className="flex items-center gap-2"><input type="hidden" name="id" value={String(i.id)} /><Badge variant="muted">Expires {new Date(i.expires_at as Date).toLocaleDateString()}</Badge><Button size="sm" variant="outline">Revoke</Button></form>
             </div>)}
           </CardContent>
         </Card>
@@ -89,7 +89,14 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
         <Card><CardHeader><CardTitle className="flex items-center gap-2"><Code2 className="size-4 text-primary" />Website chat widget</CardTitle>
           <p className="text-sm text-muted-foreground">Paste this before the closing body tag on the client website.</p></CardHeader>
-          <CardContent>{widget ? <textarea readOnly value={widgetCode} className="h-24 w-full rounded-lg border bg-muted p-3 font-mono text-xs" /> : <p className="text-sm text-muted-foreground">Create an active agent before enabling the widget.</p>}</CardContent>
+          <CardContent>{widget ? <div className="space-y-4"><textarea readOnly value={widgetCode} className="h-24 w-full rounded-lg border bg-muted p-3 font-mono text-xs" />
+            <form action={saveWidgetSettings} className="grid gap-3 sm:grid-cols-2">
+              <Input name="title" defaultValue={String(widget.title)} placeholder="Widget title" required />
+              <Input name="welcomeMessage" defaultValue={String(widget.welcome_message)} placeholder="Welcome message" required />
+              <textarea name="allowedDomains" defaultValue={Array.isArray(widget.allowed_domains) ? widget.allowed_domains.join("\n") : ""} placeholder={"Allowed domains, one per line\nexample.com\nLeave empty to allow all"} className="min-h-24 rounded-lg border bg-background p-3 text-sm sm:col-span-2" />
+              <Button className="sm:w-fit">Save widget settings</Button>
+            </form>
+          </div> : <p className="text-sm text-muted-foreground">Create an active agent before enabling the widget.</p>}</CardContent>
         </Card>
 
         <Card><CardHeader><CardTitle>CRM webhook</CardTitle>

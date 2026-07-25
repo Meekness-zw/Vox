@@ -1,4 +1,5 @@
 import type { SimpleMessage } from "@/lib/agent-runtime";
+import { sql } from "@/lib/db";
 
 /** Escape text for safe inclusion in TwiML/XML. */
 export function escapeXml(s: string) {
@@ -66,8 +67,7 @@ export function isClosing(text: string) {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory call sessions. Good enough for a single-instance demo; production
-// should use Redis or the database keyed by CallSid (see README).
+// Database-backed call sessions survive Vercel cold starts and instance changes.
 // ---------------------------------------------------------------------------
 type CallSession = {
   agentId: string;
@@ -79,11 +79,23 @@ type CallSession = {
 
 const sessions = new Map<string, CallSession>();
 
-export function getSession(callSid: string) {
-  return sessions.get(callSid);
+export async function getSession(callSid: string) {
+  const local = sessions.get(callSid);
+  if (local) return local;
+  if (!sql) return undefined;
+  const rows = await sql`select * from voice_call_sessions where call_sid=${callSid} limit 1`;
+  if (!rows.length) return undefined;
+  const r = rows[0];
+  const session: CallSession = {
+    agentId: String(r.agent_id), workspaceId: String(r.workspace_id),
+    messages: r.messages as SimpleMessage[], from: String(r.caller),
+    startedAt: new Date(r.started_at as Date).toISOString(),
+  };
+  sessions.set(callSid, session);
+  return session;
 }
 
-export function startSession(
+export async function startSession(
   callSid: string,
   agentId: string,
   from: string,
@@ -97,11 +109,25 @@ export function startSession(
     startedAt: new Date().toISOString(),
   };
   sessions.set(callSid, session);
+  if (sql) await sql`
+    insert into voice_call_sessions(call_sid,workspace_id,agent_id,caller,messages,started_at)
+    values(${callSid},${workspaceId},${agentId},${from},${sql.json([])},${session.startedAt})
+    on conflict(call_sid) do update set updated_at=now()
+  `;
   return session;
 }
 
-export function endSession(callSid: string) {
-  const s = sessions.get(callSid);
+export async function saveSession(callSid: string, session: CallSession) {
+  sessions.set(callSid, session);
+  if (sql) await sql`
+    update voice_call_sessions set messages=${sql.json(session.messages)},updated_at=now()
+    where call_sid=${callSid}
+  `;
+}
+
+export async function endSession(callSid: string) {
+  const s = await getSession(callSid);
   sessions.delete(callSid);
+  if (sql) await sql`delete from voice_call_sessions where call_sid=${callSid}`;
   return s;
 }

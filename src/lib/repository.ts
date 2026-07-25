@@ -925,7 +925,8 @@ export async function getTeamInvitation(tokenHash: string) {
   if (!sql) return null;
   const rows = await sql`
     select * from team_invitations
-    where token_hash=${tokenHash} and accepted_at is null and expires_at > now() limit 1
+    where token_hash=${tokenHash} and accepted_at is null and revoked_at is null
+      and expires_at > now() limit 1
   `;
   return rows[0] ?? null;
 }
@@ -975,6 +976,39 @@ export async function getWidgetByToken(token: string) {
   return rows[0] ?? null;
 }
 
+export async function updateWidgetConfig(opts: {
+  workspaceId: string; allowedDomains: string[]; title: string; welcomeMessage: string;
+}) {
+  if (!sql) throw new Error("DATABASE_URL is not set");
+  await sql`
+    update widget_configs set allowed_domains=${sql.json(opts.allowedDomains)},
+      title=${opts.title}, welcome_message=${opts.welcomeMessage}, updated_at=now()
+    where workspace_id=${opts.workspaceId}
+  `;
+}
+
+export async function consumeWidgetRateLimit(token: string, identity: string, limit = 20) {
+  if (!sql) return true;
+  const minute = Math.floor(Date.now() / 60000);
+  const bucket = `${token}:${identity}:${minute}`;
+  const rows = await sql`
+    insert into widget_rate_limits (bucket,request_count,expires_at)
+    values (${bucket},1,now() + interval '2 minutes')
+    on conflict (bucket) do update set request_count=widget_rate_limits.request_count + 1
+    returning request_count
+  `;
+  if (Math.random() < 0.02) await sql`delete from widget_rate_limits where expires_at < now()`;
+  return Number(rows[0].request_count) <= limit;
+}
+
+export async function revokeTeamInvitation(id: string, workspaceId: string) {
+  if (!sql) return;
+  await sql`
+    update team_invitations set revoked_at=now()
+    where id=${id} and workspace_id=${workspaceId} and accepted_at is null
+  `;
+}
+
 export async function saveCrmConnection(opts: {
   workspaceId: string; name: string; webhookUrl: string; secretEncrypted?: string;
 }) {
@@ -992,6 +1026,30 @@ export async function getCrmConnection(workspaceId: string) {
   if (!sql) return null;
   const rows = await sql`select * from crm_connections where workspace_id=${workspaceId} limit 1`;
   return rows[0] ?? null;
+}
+
+export async function createCrmDelivery(workspaceId: string, payload: Record<string, unknown>) {
+  if (!sql) return null;
+  const id = "crm_" + crypto.randomUUID();
+  await sql`
+    insert into crm_deliveries(id,workspace_id,payload)
+    values(${id},${workspaceId},${sql.json(JSON.parse(JSON.stringify(payload)))})
+  `;
+  return id;
+}
+
+export async function finishCrmDelivery(id: string, ok: boolean, status?: number, error?: string) {
+  if (!sql) return;
+  await sql`
+    update crm_deliveries set status=${ok ? "delivered" : "failed"},
+      attempts=attempts+1,response_status=${status ?? null},last_error=${error ?? null},updated_at=now()
+    where id=${id}
+  `;
+}
+
+export async function listCrmDeliveries(workspaceId: string) {
+  if (!sql) return [];
+  return sql`select * from crm_deliveries where workspace_id=${workspaceId} order by created_at desc limit 20`;
 }
 
 export async function addAuditEvent(workspaceId: string, actorEmail: string, action: string, details = {}) {

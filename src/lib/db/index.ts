@@ -158,6 +158,16 @@ create table if not exists appointments (
 create index if not exists appointments_ws_idx on appointments (workspace_id);
 create index if not exists appointments_starts_idx on appointments (starts_at);
 
+create table if not exists voice_call_sessions (
+  call_sid text primary key,
+  workspace_id text not null,
+  agent_id text not null,
+  caller text not null,
+  messages jsonb not null default '[]'::jsonb,
+  started_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists client_invoices (
   id text primary key,
   workspace_id text not null default 'ws_demo',
@@ -272,6 +282,7 @@ create table if not exists team_invitations (
   accepted_at timestamptz,
   created_at timestamptz not null default now()
 );
+alter table team_invitations add column if not exists revoked_at timestamptz;
 create index if not exists team_invitations_ws_idx on team_invitations (workspace_id, created_at desc);
 
 create table if not exists widget_configs (
@@ -284,6 +295,14 @@ create table if not exists widget_configs (
   enabled boolean not null default true,
   updated_at timestamptz not null default now()
 );
+alter table widget_configs add column if not exists allowed_domains jsonb not null default '[]'::jsonb;
+
+create table if not exists widget_rate_limits (
+  bucket text primary key,
+  request_count integer not null default 1,
+  expires_at timestamptz not null
+);
+create index if not exists widget_rate_limits_expiry_idx on widget_rate_limits (expires_at);
 
 create table if not exists crm_connections (
   workspace_id text primary key,
@@ -295,6 +314,19 @@ create table if not exists crm_connections (
   last_error text,
   updated_at timestamptz not null default now()
 );
+
+create table if not exists crm_deliveries (
+  id text primary key,
+  workspace_id text not null,
+  payload jsonb not null,
+  status text not null default 'pending',
+  attempts integer not null default 0,
+  response_status integer,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists crm_deliveries_ws_idx on crm_deliveries (workspace_id, created_at desc);
 
 create table if not exists audit_events (
   id text primary key,
@@ -319,6 +351,7 @@ alter table knowledge_chunks enable row level security;
 alter table phone_numbers enable row level security;
 alter table calendar_connections enable row level security;
 alter table appointments enable row level security;
+alter table voice_call_sessions enable row level security;
 alter table client_invoices enable row level security;
 alter table document_templates enable row level security;
 alter table business_documents enable row level security;
@@ -326,7 +359,9 @@ alter table bot_requests enable row level security;
 alter table company_profiles enable row level security;
 alter table team_invitations enable row level security;
 alter table widget_configs enable row level security;
+alter table widget_rate_limits enable row level security;
 alter table crm_connections enable row level security;
+alter table crm_deliveries enable row level security;
 alter table audit_events enable row level security;
 `;
 

@@ -12,6 +12,7 @@ import {
   isClosing,
   getSession,
   startSession,
+  saveSession,
   endSession,
 } from "@/lib/voice/twiml";
 import { formDataToParams, isValidTwilioRequest, publicWebhookUrl } from "@/lib/twilio-signature";
@@ -43,13 +44,13 @@ export async function POST(req: Request) {
   const to = String(form.get("To") ?? "unknown");
   const speech = String(form.get("SpeechResult") ?? "").trim();
 
-  let session = getSession(callSid);
+  let session = await getSession(callSid);
   if (!session) {
     // Session lost (e.g. cold start) — re-resolve the route and start fresh.
     const route = await getRoutingForNumber(to, "voice");
     const workspaceId = route?.workspaceId ?? "ws_demo";
     const agentId = url.searchParams.get("agentId") ?? route?.agentId ?? "";
-    session = startSession(callSid, agentId, from, workspaceId);
+    session = await startSession(callSid, agentId, from, workspaceId);
   }
 
   const agentId = url.searchParams.get("agentId") ?? session.agentId;
@@ -77,10 +78,11 @@ export async function POST(req: Request) {
     contactPhone: from,
   });
   session.messages.push({ role: "assistant", content: reply });
+  await saveSession(callSid, session);
 
   // End the call when the caller says goodbye or the agent closes out.
   if (isClosing(speech) || isClosing(reply)) {
-    const ended = endSession(callSid);
+    const ended = await endSession(callSid);
     if (ended) {
       const durationSec = Math.max(
         1,

@@ -43,7 +43,7 @@ export async function POST(req: Request) {
     );
   }
 
-  startSession(callSid, agent.id, from, workspaceId);
+  await startSession(callSid, agent.id, from, workspaceId);
 
   const action = `/api/voice/respond?agentId=${encodeURIComponent(agent.id)}`;
   return sayAndGather(agent.greeting, action, agent.language);

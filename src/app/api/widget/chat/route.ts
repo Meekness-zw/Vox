@@ -1,7 +1,7 @@
 import { generateReply, type SimpleMessage } from "@/lib/agent-runtime";
 import { buildConversation } from "@/lib/conversation";
 import { retrieveContext } from "@/lib/rag";
-import { getAgentById, getWidgetByToken, upsertConversation } from "@/lib/repository";
+import { consumeWidgetRateLimit, getAgentById, getWidgetByToken, upsertConversation } from "@/lib/repository";
 import { syncCrmLead } from "@/lib/crm";
 
 export const maxDuration = 30;
@@ -11,6 +11,11 @@ export async function POST(req: Request) {
   const token = String(body.token ?? "");
   const config = await getWidgetByToken(token);
   if (!config) return Response.json({ error: "Widget not found" }, { status: 404 });
+  const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const identity = forwarded || req.headers.get("user-agent") || "anonymous";
+  if (!(await consumeWidgetRateLimit(token, identity))) {
+    return Response.json({ error: "Too many messages. Please wait a minute." }, { status: 429 });
+  }
   const workspaceId = String(config.workspace_id);
   const agent = await getAgentById(String(config.agent_id), workspaceId);
   if (!agent) return Response.json({ error: "Agent unavailable" }, { status: 503 });
