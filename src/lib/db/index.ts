@@ -50,6 +50,22 @@ create table if not exists users (
   role text not null default 'Owner',
   created_at timestamptz not null default now()
 );
+alter table users add column if not exists status text not null default 'active';
+
+create table if not exists sms_messages (
+  id text primary key,
+  workspace_id text not null,
+  to_number text not null,
+  from_number text not null,
+  body text not null,
+  status text not null default 'queued',
+  twilio_sid text,
+  error_message text,
+  created_by text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists sms_messages_ws_idx on sms_messages (workspace_id, created_at desc);
 
 create table if not exists agents (
   id text primary key,
@@ -344,6 +360,7 @@ create index if not exists audit_events_ws_idx on audit_events (workspace_id, cr
 -- get no table access while the database owner used by the backend can operate.
 alter table workspaces enable row level security;
 alter table users enable row level security;
+alter table sms_messages enable row level security;
 alter table agents enable row level security;
 alter table conversations enable row level security;
 alter table knowledge_sources enable row level security;

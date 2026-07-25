@@ -1,89 +1,37 @@
-import { Plus } from "lucide-react";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { StatCard } from "@/components/dashboard/stat-card";
-import { smsCampaigns } from "@/lib/data";
-import { formatNumber } from "@/lib/utils";
+import { requireSession } from "@/lib/auth/session-cookies";
+import { listSmsMessages } from "@/lib/repository";
+import { sendSms } from "./actions";
 
-export default function SmsPage() {
-  const totals = smsCampaigns.reduce(
-    (acc, c) => ({
-      sent: acc.sent + c.sent,
-      delivered: acc.delivered + c.delivered,
-      replied: acc.replied + c.replied,
-    }),
-    { sent: 0, delivered: 0, replied: 0 }
-  );
-  const deliveryRate = ((totals.delivered / totals.sent) * 100).toFixed(1);
-  const replyRate = ((totals.replied / totals.delivered) * 100).toFixed(1);
+export const dynamic = "force-dynamic";
 
-  return (
-    <>
-      <Topbar title="SMS Automation" />
-      <div className="space-y-6 p-4 sm:p-6">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatCard label="Messages sent" value={formatNumber(totals.sent)} />
-          <StatCard label="Delivered" value={formatNumber(totals.delivered)} />
-          <StatCard label="Delivery rate" value={`${deliveryRate}%`} />
-          <StatCard label="Reply rate" value={`${replyRate}%`} />
-        </div>
-
-        <Card>
-          <CardHeader className="flex-row items-center justify-between">
-            <div>
-              <CardTitle>Automations</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Triggered automatically by your agents and calendar events
-              </p>
-            </div>
-            <Button size="sm">
-              <Plus className="size-4" /> New automation
-            </Button>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
-                    <th className="px-5 py-3 font-medium">Automation</th>
-                    <th className="px-5 py-3 font-medium">Type</th>
-                    <th className="px-5 py-3 font-medium">Status</th>
-                    <th className="px-5 py-3 text-right font-medium">Sent</th>
-                    <th className="px-5 py-3 text-right font-medium">Delivered</th>
-                    <th className="px-5 py-3 text-right font-medium">Replied</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {smsCampaigns.map((c) => (
-                    <tr key={c.id} className="hover:bg-muted/50">
-                      <td className="px-5 py-3.5 font-medium">{c.name}</td>
-                      <td className="px-5 py-3.5 text-muted-foreground">
-                        {c.type}
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <Badge variant={c.status === "active" ? "success" : "muted"}>
-                          {c.status}
-                        </Badge>
-                      </td>
-                      <td className="px-5 py-3.5 text-right tabular-nums">
-                        {formatNumber(c.sent)}
-                      </td>
-                      <td className="px-5 py-3.5 text-right tabular-nums">
-                        {formatNumber(c.delivered)}
-                      </td>
-                      <td className="px-5 py-3.5 text-right tabular-nums">
-                        {formatNumber(c.replied)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </>
-  );
+export default async function SmsPage() {
+  const session = await requireSession();
+  const messages = await listSmsMessages(session.workspaceId);
+  const sent = messages.filter((m) => m.status !== "failed").length;
+  const failed = messages.filter((m) => m.status === "failed").length;
+  return <><Topbar title="SMS Automation" /><div className="space-y-6 p-4 sm:p-6">
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <StatCard label="Messages recorded" value={String(messages.length)} />
+      <StatCard label="Accepted by Twilio" value={String(sent)} />
+      <StatCard label="Failed" value={String(failed)} />
+      <StatCard label="Success rate" value={`${messages.length ? Math.round(sent/messages.length*100) : 0}%`} />
+    </div>
+    <Card><CardHeader><CardTitle>Send a message</CardTitle><p className="text-sm text-muted-foreground">Use international format, for example +263…</p></CardHeader>
+      <CardContent><form action={sendSms} className="space-y-3"><Input name="to" placeholder="+263…" required />
+        <textarea name="body" maxLength={1500} required placeholder="Message" className="min-h-28 w-full rounded-lg border bg-background p-3 text-sm" />
+        <Button>Send SMS</Button></form></CardContent></Card>
+    <Card><CardHeader><CardTitle>Delivery history</CardTitle></CardHeader><CardContent className="p-0">
+      <div className="divide-y">{messages.length ? messages.map((m) => <div key={String(m.id)} className="grid gap-2 px-5 py-4 text-sm sm:grid-cols-[160px_1fr_110px]">
+        <div><div className="font-medium">{String(m.to_number)}</div><div className="text-xs text-muted-foreground">{new Date(m.created_at as Date).toLocaleString()}</div></div>
+        <div><p>{String(m.body)}</p>{m.error_message && <p className="mt-1 text-xs text-destructive">{String(m.error_message)}</p>}</div>
+        <Badge variant={m.status === "failed" ? "muted" : "success"}>{String(m.status)}</Badge>
+      </div>) : <p className="p-6 text-sm text-muted-foreground">No SMS messages sent yet.</p>}</div>
+    </CardContent></Card>
+  </div></>;
 }

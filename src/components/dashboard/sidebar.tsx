@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Boxes,
   UsersRound,
+  Activity,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { logout } from "@/lib/auth/actions";
@@ -78,6 +79,7 @@ export function Sidebar({
           <SidebarItem key={item.href} {...item} active={isActive(item.href, item.exact)} />
         ))}
         {admin && <>
+          <SidebarItem href="/dashboard/admin/operations" label="Operations" icon={Activity} active={isActive("/dashboard/admin/operations")} />
           <SidebarItem href="/dashboard/admin/clients" label="Users & subscriptions" icon={UsersRound} active={isActive("/dashboard/admin/clients")} />
           <SidebarItem href="/dashboard/admin/bots" label="Bot administration" icon={Boxes} active={isActive("/dashboard/admin/bots")} />
           <SidebarItem href="/dashboard/admin/requests" label="Bot build queue" icon={ShieldCheck} active={isActive("/dashboard/admin/requests")} />

@@ -43,7 +43,7 @@ export async function login(
   }
 
   const user = await findUserByEmail(email);
-  if (!user || !verifyPassword(password, user.passwordHash)) {
+  if (!user || user.status !== "active" || !verifyPassword(password, user.passwordHash)) {
     return { error: "Invalid email or password." };
   }
   await setSessionCookie(

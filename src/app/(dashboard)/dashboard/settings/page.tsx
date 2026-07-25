@@ -8,7 +8,7 @@ import { getCalendarConnection, getCrmConnection, getOrCreateWidgetConfig, listA
 import { hasCalendarCredentials } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
-import { connectCrm, createInvitation, revokeInvitation, saveWidgetSettings } from "./actions";
+import { connectCrm, createInvitation, manageTeamMember, revokeInvitation, saveWidgetSettings } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -72,9 +72,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                   <div className="text-sm font-medium">{m.name}</div>
                   <div className="text-xs text-muted-foreground">{m.email}</div>
                 </div>
-                <Badge variant={roleVariant[m.role as keyof typeof roleVariant]}>
-                  {m.role}
-                </Badge>
+                {m.role === "Owner" ? <Badge variant="default">Owner</Badge> : <form action={manageTeamMember} className="flex items-center gap-2">
+                  <input type="hidden" name="userId" value={m.id} />
+                  <select name="role" defaultValue={m.role} className="h-8 rounded-md border bg-background px-2 text-xs"><option>Agent</option><option>Admin</option></select>
+                  <Button size="sm" variant="outline" name="intent" value="role">Save</Button>
+                  <Button size="sm" variant="outline" name="intent" value="deactivate">Deactivate</Button>
+                </form>}
               </div>
             ))}
             {invitations.filter((i) => !i.accepted_at && !i.revoked_at).map((i) => <div key={String(i.id)} className="flex items-center justify-between px-5 py-3 text-sm">

@@ -11,6 +11,7 @@ import {
   revokeTeamInvitation,
   saveCrmConnection,
   updateWidgetConfig,
+  updateWorkspaceUser,
 } from "@/lib/repository";
 import { encryptSecret } from "@/lib/token-crypto";
 
@@ -76,5 +77,22 @@ export async function revokeInvitation(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   await revokeTeamInvitation(id, session.workspaceId);
   await addAuditEvent(session.workspaceId, session.email, "team.invitation_revoked", { id });
+  revalidatePath("/dashboard/settings");
+}
+
+export async function manageTeamMember(formData: FormData) {
+  const session = await requireManager();
+  const userId = String(formData.get("userId") ?? "");
+  const intent = String(formData.get("intent") ?? "role");
+  if (userId === session.userId) throw new Error("You cannot deactivate your own account.");
+  if (intent === "deactivate") {
+    await updateWorkspaceUser({ workspaceId: session.workspaceId, userId, status: "disabled" });
+    await addAuditEvent(session.workspaceId, session.email, "team.member_deactivated", { userId });
+  } else {
+    const role = String(formData.get("role") ?? "Agent");
+    if (!["Admin", "Agent"].includes(role)) throw new Error("Invalid role");
+    await updateWorkspaceUser({ workspaceId: session.workspaceId, userId, role });
+    await addAuditEvent(session.workspaceId, session.email, "team.role_updated", { userId, role });
+  }
   revalidatePath("/dashboard/settings");
 }

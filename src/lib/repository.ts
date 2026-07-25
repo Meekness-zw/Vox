@@ -45,7 +45,7 @@ export async function listWorkspaceUsers(
   const rows = await sql`
     select id, name, email, role
     from users
-    where workspace_id = ${workspaceId}
+    where workspace_id = ${workspaceId} and status='active'
     order by created_at
   `;
   return rows.map((row) => ({
@@ -869,6 +869,7 @@ export type DbUser = {
   passwordHash: string;
   name: string;
   role: string;
+  status: string;
 };
 
 export async function findUserByEmail(email: string): Promise<DbUser | null> {
@@ -883,6 +884,7 @@ export async function findUserByEmail(email: string): Promise<DbUser | null> {
     passwordHash: r.password_hash as string,
     name: r.name as string,
     role: r.role as string,
+    status: String(r.status ?? "active"),
   };
 }
 
@@ -907,6 +909,54 @@ export async function createWorkspaceWithOwner(opts: {
     passwordHash: opts.passwordHash,
     name: opts.name,
     role: "Owner",
+    status: "active",
+  };
+}
+
+export async function updateWorkspaceUser(opts: {
+  workspaceId: string; userId: string; role?: string; status?: string;
+}) {
+  if (!sql) return;
+  if (opts.role) await sql`
+    update users set role=${opts.role} where id=${opts.userId}
+      and workspace_id=${opts.workspaceId} and role <> 'Owner'
+  `;
+  if (opts.status) await sql`
+    update users set status=${opts.status} where id=${opts.userId}
+      and workspace_id=${opts.workspaceId} and role <> 'Owner'
+  `;
+}
+
+export async function insertSmsMessage(opts: {
+  workspaceId: string; to: string; from: string; body: string;
+  createdBy: string; status: string; twilioSid?: string; errorMessage?: string;
+}) {
+  if (!sql) return;
+  await sql`
+    insert into sms_messages(id,workspace_id,to_number,from_number,body,status,twilio_sid,error_message,created_by)
+    values(${"sms_" + crypto.randomUUID()},${opts.workspaceId},${opts.to},${opts.from},${opts.body},
+      ${opts.status},${opts.twilioSid ?? null},${opts.errorMessage ?? null},${opts.createdBy})
+  `;
+}
+
+export async function listSmsMessages(workspaceId: string) {
+  if (!sql) return [];
+  return sql`select * from sms_messages where workspace_id=${workspaceId} order by created_at desc limit 100`;
+}
+
+export async function getOperationsSnapshot() {
+  if (!sql) return { failedCrm: 0, failedSms: 0, activeCalls: 0, users: 0, agents: 0 };
+  const [row] = await sql`
+    select
+      (select count(*)::int from crm_deliveries where status='failed') as failed_crm,
+      (select count(*)::int from sms_messages where status='failed') as failed_sms,
+      (select count(*)::int from voice_call_sessions) as active_calls,
+      (select count(*)::int from users where status='active') as users,
+      (select count(*)::int from agents where status='active') as agents
+  `;
+  return {
+    failedCrm: Number(row.failed_crm), failedSms: Number(row.failed_sms),
+    activeCalls: Number(row.active_calls), users: Number(row.users), agents: Number(row.agents),
   };
 }
 
