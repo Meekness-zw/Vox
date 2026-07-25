@@ -1,5 +1,5 @@
 import { isDbEnabled, initSchema, sql } from "@/lib/db";
-import { upsertAgent, insertConversation } from "@/lib/repository";
+import { upsertAgent, insertConversation, upsertPhoneNumber } from "@/lib/repository";
 import { agents, conversations } from "@/lib/data";
 import { hashPassword } from "@/lib/auth/password";
 import { ingestSource } from "@/lib/rag";
@@ -29,8 +29,9 @@ export async function POST() {
 
   // Demo workspace + owner (login: demo@vox.ai / demo1234)
   await sql!`
-    insert into workspaces (id, name, plan) values ('ws_demo', 'Bright Smile Dental', 'growth')
-    on conflict (id) do nothing
+    insert into workspaces (id, name, plan, subscription_status)
+    values ('ws_demo', 'Bright Smile Dental', 'growth', 'active')
+    on conflict (id) do update set plan = 'growth', subscription_status = 'active'
   `;
   await sql!`
     insert into users (id, workspace_id, email, password_hash, name, role)
@@ -40,6 +41,25 @@ export async function POST() {
 
   for (const a of agents) await upsertAgent(a, "ws_demo");
   for (const c of conversations) await insertConversation(c, "ws_demo");
+
+  // Route real Twilio numbers to the demo workspace, if configured, so voice
+  // calls / WhatsApp messages work immediately after connecting a number.
+  const voiceNumber = process.env.TWILIO_PHONE_NUMBER;
+  if (voiceNumber) {
+    const voiceAgent = agents.find((a) => a.type === "voice" && a.status === "active") ?? agents[0];
+    await upsertPhoneNumber(
+      { id: "pn_demo_voice", number: voiceNumber, channel: "voice", agentId: voiceAgent.id },
+      "ws_demo"
+    );
+  }
+  const whatsappNumber = process.env.TWILIO_WHATSAPP_NUMBER;
+  if (whatsappNumber) {
+    const chatAgent = agents.find((a) => a.type === "chat" && a.status === "active") ?? agents[0];
+    await upsertPhoneNumber(
+      { id: "pn_demo_whatsapp", number: whatsappNumber, channel: "whatsapp", agentId: chatAgent.id },
+      "ws_demo"
+    );
+  }
 
   // Ingest the demo knowledge base once so RAG has data to retrieve.
   const existing = await sql!`
@@ -63,6 +83,8 @@ export async function POST() {
       agents: agents.length,
       conversations: conversations.length,
       knowledgeSources: knowledge,
+      voiceNumberRouted: Boolean(voiceNumber),
+      whatsappNumberRouted: Boolean(whatsappNumber),
     },
   });
 }

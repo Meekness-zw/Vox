@@ -2,7 +2,13 @@ import { Check, Plus, ScrollText } from "lucide-react";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { getSession } from "@/lib/auth/session-cookies";
+import { getCalendarConnection } from "@/lib/repository";
+import { hasCalendarCredentials } from "@/lib/calendar";
+import { cn } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
 
 const team = [
   { name: "Bright Smile (You)", email: "owner@brightsmile.com", role: "Owner" },
@@ -10,16 +16,13 @@ const team = [
   { name: "Priya Patel", email: "priya@brightsmile.com", role: "Agent" },
 ];
 
-const integrations = [
-  { name: "Google Calendar", category: "Calendar", connected: true },
+const staticIntegrations = [
   { name: "Microsoft Outlook", category: "Calendar", connected: false },
   { name: "HubSpot", category: "CRM", connected: true },
   { name: "Salesforce", category: "CRM", connected: false },
   { name: "Zoho", category: "CRM", connected: false },
   { name: "Pipedrive", category: "CRM", connected: false },
-  { name: "Twilio", category: "Telephony", connected: true },
   { name: "Telnyx", category: "Telephony", connected: false },
-  { name: "WhatsApp Business", category: "Messaging", connected: false },
 ];
 
 const auditLog = [
@@ -31,7 +34,15 @@ const auditLog = [
 
 const roleVariant = { Owner: "default", Admin: "success", Agent: "muted" } as const;
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const session = await getSession();
+  const workspaceId = session?.workspaceId ?? "ws_demo";
+  const calendarConnected = hasCalendarCredentials()
+    ? Boolean(await getCalendarConnection(workspaceId))
+    : false;
+  const voiceConfigured = Boolean(process.env.TWILIO_ACCOUNT_SID);
+  const whatsappConfigured = Boolean(process.env.TWILIO_WHATSAPP_NUMBER);
+
   return (
     <>
       <Topbar title="Settings" />
@@ -77,7 +88,55 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {integrations.map((i) => (
+              {/* Google Calendar — real OAuth connection */}
+              <div className="flex items-center justify-between rounded-lg border border-border p-4">
+                <div>
+                  <div className="text-sm font-medium">Google Calendar</div>
+                  <div className="text-xs text-muted-foreground">Calendar</div>
+                </div>
+                {calendarConnected ? (
+                  <Badge variant="success">
+                    <Check className="size-3" /> Connected
+                  </Badge>
+                ) : (
+                  <a
+                    href="/api/integrations/google/connect"
+                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                  >
+                    Connect
+                  </a>
+                )}
+              </div>
+
+              {/* Twilio voice + WhatsApp — env-var driven, same as System status */}
+              <div className="flex items-center justify-between rounded-lg border border-border p-4">
+                <div>
+                  <div className="text-sm font-medium">Twilio</div>
+                  <div className="text-xs text-muted-foreground">Telephony</div>
+                </div>
+                {voiceConfigured ? (
+                  <Badge variant="success">
+                    <Check className="size-3" /> Connected
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Set TWILIO_ACCOUNT_SID</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-border p-4">
+                <div>
+                  <div className="text-sm font-medium">WhatsApp Business</div>
+                  <div className="text-xs text-muted-foreground">Messaging</div>
+                </div>
+                {whatsappConfigured ? (
+                  <Badge variant="success">
+                    <Check className="size-3" /> Connected
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Set TWILIO_WHATSAPP_NUMBER</span>
+                )}
+              </div>
+
+              {staticIntegrations.map((i) => (
                 <div
                   key={i.name}
                   className="flex items-center justify-between rounded-lg border border-border p-4"

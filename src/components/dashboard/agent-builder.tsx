@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Save, Phone, MessageSquare, Sparkles, Loader2 } from "lucide-react";
 import type { Agent } from "@/lib/types";
 import { saveAgent } from "@/app/(dashboard)/dashboard/agents/actions";
@@ -11,11 +11,13 @@ import { Badge } from "@/components/ui/badge";
 import { ChatPanel } from "@/components/chat/chat-panel";
 
 const voices = [
-  "Ava — warm, professional",
+  "Micheal — calm, professional",
   "Leo — calm, low",
   "Maya — bright, energetic",
   "Sam — neutral, clear",
 ];
+
+type VoiceOption = { id: string; name: string; accent?: string; description?: string };
 
 const languages = [
   "English (US)",
@@ -23,13 +25,23 @@ const languages = [
   "Spanish",
   "French",
   "German",
+  "Shona",
+  "English + Shona (code-switching)",
   "Multi-language",
 ];
 
-export function AgentBuilder({ agent, isNew }: { agent: Agent; isNew: boolean }) {
+export function AgentBuilder({ agent, isNew, workspaceId }: { agent: Agent; isNew: boolean; workspaceId?: string }) {
   const [form, setForm] = useState<Agent>(agent);
   const [saved, setSaved] = useState<null | { persisted: boolean }>(null);
   const [pending, startTransition] = useTransition();
+  const [elevenVoices, setElevenVoices] = useState<VoiceOption[]>([]);
+
+  useEffect(() => {
+    fetch("/api/elevenlabs/voices")
+      .then((response) => response.ok ? response.json() : { voices: [] })
+      .then((data: { voices?: VoiceOption[] }) => setElevenVoices(data.voices ?? []))
+      .catch(() => setElevenVoices([]));
+  }, []);
 
   function update<K extends keyof Agent>(key: K, value: Agent[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -41,7 +53,7 @@ export function AgentBuilder({ agent, isNew }: { agent: Agent; isNew: boolean })
       ? { ...form, id: `ag_${Date.now()}`, createdAt: new Date().toISOString() }
       : form;
     startTransition(async () => {
-      const res = await saveAgent(payload);
+      const res = await saveAgent(payload, workspaceId);
       setSaved({ persisted: res.persisted });
     });
   }
@@ -114,9 +126,20 @@ export function AgentBuilder({ agent, isNew }: { agent: Agent; isNew: boolean })
                     onChange={(e) => update("voice", e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
+                    {elevenVoices.length > 0 && (
+                      <optgroup label="ElevenLabs voices">
+                        {elevenVoices.map((v) => (
+                          <option key={v.id} value={`elevenlabs:${v.id}`}>
+                            {v.name}{v.accent ? ` — ${v.accent}` : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <optgroup label={elevenVoices.length ? "Fallback labels" : "Voices"}>
                     {voices.map((v) => (
-                      <option key={v}>{v}</option>
+                      <option key={v} value={v}>{v}</option>
                     ))}
+                    </optgroup>
                   </select>
                 </div>
               )}

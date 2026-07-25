@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-export function PlanSwitcher({ currentPlanId }: { currentPlanId: string }) {
+export function PlanSwitcher({ currentPlanId, botRequestId }: { currentPlanId: string; botRequestId?: string }) {
   const [loading, setLoading] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -22,11 +22,11 @@ export function PlanSwitcher({ currentPlanId }: { currentPlanId: string }) {
       const res = await fetch("/api/stripe/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId }),
+        body: JSON.stringify({ planId, botRequestId }),
       });
       const data = await res.json();
       if (res.ok && data.url) {
-        window.location.href = data.url;
+        window.location.assign(data.url);
         return;
       }
       setNotice(
@@ -85,7 +85,9 @@ export function PlanSwitcher({ currentPlanId }: { currentPlanId: string }) {
                   ? "Current plan"
                   : plan.id === "enterprise"
                     ? "Contact sales"
-                    : "Switch plan"}
+                    : currentPlanId === "free"
+                      ? "Subscribe"
+                      : "Switch plan"}
               </Button>
             </div>
           );

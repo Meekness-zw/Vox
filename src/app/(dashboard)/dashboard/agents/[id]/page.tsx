@@ -3,9 +3,10 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Topbar } from "@/components/dashboard/topbar";
 import { AgentBuilder } from "@/components/dashboard/agent-builder";
-import { getAgentById } from "@/lib/repository";
+import { getAgentById, listAdminBots } from "@/lib/repository";
 import { getSession } from "@/lib/auth/session-cookies";
 import type { Agent } from "@/lib/types";
+import { isVoxAdmin } from "@/lib/admin";
 
 const blankAgent: Agent = {
   id: "ag_web_chat", // reuse demo knowledge base for live preview
@@ -13,7 +14,7 @@ const blankAgent: Agent = {
   type: "chat",
   status: "draft",
   language: "English (US)",
-  voice: "Ava — warm, professional",
+  voice: "Micheal — calm, professional",
   personality: "Friendly, concise, helpful",
   greeting: "Hi! 👋 How can I help you today?",
   systemPrompt:
@@ -25,13 +26,23 @@ const blankAgent: Agent = {
 
 export default async function AgentBuilderPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ workspace?: string }>;
 }) {
   const { id } = await params;
   const isNew = id === "new";
   const session = await getSession();
-  const agent = isNew ? blankAgent : await getAgentById(id, session?.workspaceId);
+  const requestedWorkspace = (await searchParams).workspace;
+  const admin = session ? isVoxAdmin(session.email) : false;
+  const adminBot = session && admin && !requestedWorkspace && !isNew
+    ? (await listAdminBots()).find((bot) => bot.id === id)
+    : undefined;
+  const workspaceId = session && admin
+    ? requestedWorkspace || adminBot?.workspaceId || session.workspaceId
+    : session?.workspaceId;
+  const agent = isNew ? blankAgent : await getAgentById(id, workspaceId);
 
   if (!agent) notFound();
 
@@ -45,7 +56,7 @@ export default async function AgentBuilderPage({
         >
           <ArrowLeft className="size-4" /> Back to agents
         </Link>
-        <AgentBuilder agent={agent} isNew={isNew} />
+        <AgentBuilder agent={agent} isNew={isNew} workspaceId={workspaceId} />
       </div>
     </>
   );

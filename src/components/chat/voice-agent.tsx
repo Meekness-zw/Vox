@@ -32,11 +32,13 @@ type Status = "idle" | "listening" | "thinking" | "speaking";
 
 export function VoiceAgent({
   agentId = "ag_front_desk",
-  agentName = "Ava",
-  greeting = "Thanks for calling Bright Smile Dental, this is Ava. How can I help you today?",
+  agentName = "Micheal",
+  agentVoice = "Micheal — calm, professional",
+  greeting = "Thanks for calling Bright Smile Dental, this is Micheal. How can I help you today?",
 }: {
   agentId?: string;
   agentName?: string;
+  agentVoice?: string;
   greeting?: string;
 }) {
   const [supported, setSupported] = useState<boolean | null>(null);
@@ -148,7 +150,7 @@ export function VoiceAgent({
         const res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, voice: agentVoice }),
         });
         const ct = res.headers.get("content-type") ?? "";
         if (res.ok && ct.includes("audio")) {
@@ -174,7 +176,7 @@ export function VoiceAgent({
       }
       browserSpeak(text, onDone);
     },
-    [browserSpeak]
+    [browserSpeak, agentVoice]
   );
 
   const stopSpeaking = useCallback(() => {
@@ -202,6 +204,9 @@ export function VoiceAgent({
     recognitionRef.current = rec;
 
     let finalText = "";
+    let recorder: MediaRecorder | null = null;
+    let microphoneStream: MediaStream | null = null;
+    const recordedChunks: Blob[] = [];
     setInterim("");
     setStatus("listening");
 
@@ -222,9 +227,30 @@ export function VoiceAgent({
         setError("Voice error: " + e.error);
       }
     };
-    rec.onend = () => {
+    rec.onend = async () => {
       setInterim("");
-      const text = finalText.trim();
+      let text = finalText.trim();
+      if (recorder && recorder.state !== "inactive") {
+        const audio = await new Promise<Blob>((resolve) => {
+          recorder!.onstop = () =>
+            resolve(new Blob(recordedChunks, { type: recorder!.mimeType || "audio/webm" }));
+          recorder!.stop();
+        });
+        microphoneStream?.getTracks().forEach((track) => track.stop());
+        if (audio.size > 1000) {
+          try {
+            const body = new FormData();
+            body.set("audio", audio, "customer-speech.webm");
+            const response = await fetch("/api/stt", { method: "POST", body });
+            if (response.ok) {
+              const transcript = await response.json() as { text?: string };
+              if (transcript.text?.trim()) text = transcript.text.trim();
+            }
+          } catch {
+            // Keep the browser transcript as a resilient fallback.
+          }
+        }
+      }
       if (text) {
         void handleUserSpeech(text);
       } else if (activeRef.current && handsFreeRef.current) {
@@ -235,11 +261,23 @@ export function VoiceAgent({
       }
     };
 
-    try {
-      rec.start();
-    } catch {
-      /* already started */
-    }
+    void (async () => {
+      try {
+        microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recorder = new MediaRecorder(microphoneStream);
+        recorder.ondataavailable = (event) => {
+          if (event.data.size) recordedChunks.push(event.data);
+        };
+        recorder.start();
+      } catch {
+        // Browser recognition still works when MediaRecorder is unavailable.
+      }
+      try {
+        rec.start();
+      } catch {
+        /* already started */
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -1,5 +1,6 @@
 import { experimental_generateSpeech as generateSpeech } from "ai";
 import { hasModelCredentials } from "@/lib/agent-runtime";
+import { resolveElevenLabsVoiceId } from "@/lib/voice/elevenlabs-voices";
 
 export const maxDuration = 30;
 
@@ -11,7 +12,7 @@ export const maxDuration = 30;
  *   3. 501 → the client falls back to the browser's built-in voice.
  */
 export async function POST(req: Request) {
-  const { text } = (await req.json()) as { text?: string };
+  const { text, voice } = (await req.json()) as { text?: string; voice?: string };
   if (!text?.trim()) {
     return Response.json({ error: "No text" }, { status: 400 });
   }
@@ -19,10 +20,12 @@ export async function POST(req: Request) {
   // 1) ElevenLabs
   const elevenKey = process.env.ELEVENLABS_API_KEY;
   if (elevenKey) {
-    const voiceId = process.env.ELEVENLABS_VOICE_ID ?? "EXAVITQu4vr4xnSDxMaL"; // Sarah
-    const model = process.env.ELEVENLABS_MODEL ?? "eleven_turbo_v2_5";
+    // ELEVENLABS_VOICE_ID is an explicit operator override; otherwise resolve
+    // the agent's named voice (e.g. "Micheal — calm, professional") to its real ID.
+    const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim() || resolveElevenLabsVoiceId(voice);
+    const model = process.env.ELEVENLABS_MODEL?.trim() || "eleven_flash_v2_5";
     const res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128&optimize_streaming_latency=3`,
       {
         method: "POST",
         headers: { "xi-api-key": elevenKey, "Content-Type": "application/json" },
@@ -30,9 +33,10 @@ export async function POST(req: Request) {
           text,
           model_id: model,
           voice_settings: {
-            stability: 0.4,
+            stability: 0.45,
             similarity_boost: 0.75,
-            style: 0.35,
+            style: 0.2,
+            speed: 1.08,
             use_speaker_boost: true,
           },
         }),

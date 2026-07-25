@@ -38,6 +38,42 @@ export type KnowledgeSource = {
   updatedAt: string;
 };
 
+export type Appointment = {
+  id: string;
+  agentId: string;
+  conversationId?: string;
+  contactName: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  service: string;
+  startsAt: string;
+  endsAt: string;
+  status: "confirmed" | "cancelled" | "completed" | "no_show";
+  googleEventId?: string;
+  createdAt: string;
+};
+
+export type InvoiceLineItem = {
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+};
+
+export type ClientInvoice = {
+  id: string;
+  agentId?: string;
+  conversationId?: string;
+  contactName: string;
+  contactEmail: string;
+  lineItems: InvoiceLineItem[];
+  subtotalCents: number;
+  totalCents: number;
+  status: "draft" | "sent" | "paid" | "void";
+  notes?: string;
+  createdAt: string;
+  sentAt?: string;
+};
+
 export type SmsCampaign = {
   id: string;
   name: string;
@@ -51,4 +87,82 @@ export type SmsCampaign = {
   sent: number;
   delivered: number;
   replied: number;
+};
+
+export type BotRequestStatus =
+  | "payment_required"
+  | "submitted"
+  | "under_review"
+  | "building"
+  | "testing"
+  | "changes_requested"
+  | "approved"
+  | "live";
+
+export type BotRequest = {
+  id: string;
+  workspaceId: string;
+  businessName: string;
+  industry: string;
+  description: string;
+  services: string;
+  businessHours: string;
+  languages: string;
+  tone: string;
+  escalation: string;
+  channels: string[];
+  contactName: string;
+  contactEmail: string;
+  status: BotRequestStatus;
+  adminNotes: string;
+  agentId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BotBillingStatus = "trial" | "paid" | "unpaid" | "past_due" | "cancelled";
+
+export type AdminBotRecord = {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  clientEmail: string;
+  name: string;
+  type: AgentType;
+  status: Agent["status"];
+  billingStatus: BotBillingStatus;
+  priceCents: number;
+  paidThrough?: string;
+  conversations: number;
+  appointments: number;
+  createdAt: string;
+};
+
+export type SubscriptionStatus = "free" | "active" | "past_due" | "cancelled";
+
+export type AdminClientRecord = {
+  workspaceId: string;
+  workspaceName: string;
+  plan: string;
+  subscriptionStatus: SubscriptionStatus;
+  subscriptionDueAt?: string;
+  stripeCustomerId?: string;
+  ownerName: string;
+  ownerEmail: string;
+  users: number;
+  bots: number;
+  createdAt: string;
+};
+
+export type CompanyProfile = {
+  workspaceId: string;
+  businessName: string;
+  industry: string;
+  description: string;
+  services: string;
+  businessHours: string;
+  languages: string;
+  tone: string;
+  escalation: string;
+  updatedAt: string;
 };

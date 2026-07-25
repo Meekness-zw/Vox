@@ -1,12 +1,18 @@
 import { getSystemStatus } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
-export function SystemStatus({ className }: { className?: string }) {
-  const services = getSystemStatus();
+export async function SystemStatus({
+  className,
+  workspaceId,
+}: {
+  className?: string;
+  workspaceId?: string;
+}) {
+  const services = await getSystemStatus(workspaceId);
   return (
     <div
       className={cn(
-        "grid gap-3 rounded-lg border border-border bg-card p-4 sm:grid-cols-3",
+        "grid gap-3 rounded-lg border border-border bg-card p-4 sm:grid-cols-2 lg:grid-cols-3",
         className
       )}
     >

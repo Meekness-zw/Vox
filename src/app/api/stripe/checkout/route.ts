@@ -1,4 +1,5 @@
 import { plans } from "@/lib/pricing";
+import { requireSession } from "@/lib/auth/session-cookies";
 
 /**
  * Creates a Stripe Checkout session for a plan.
@@ -13,7 +14,8 @@ import { plans } from "@/lib/pricing";
  * what to set up — the rest of the app keeps working.
  */
 export async function POST(req: Request) {
-  const { planId } = (await req.json()) as { planId?: string };
+  const session = await requireSession();
+  const { planId, botRequestId } = (await req.json()) as { planId?: string; botRequestId?: string };
   const plan = plans.find((p) => p.id === planId);
 
   if (!plan || plan.price === null) {
@@ -43,10 +45,15 @@ export async function POST(req: Request) {
     mode: "subscription",
     "line_items[0][price]": priceId,
     "line_items[0][quantity]": "1",
-    success_url: `${origin}/dashboard/billing?status=success`,
+    success_url: `${origin}/dashboard/billing?status=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${origin}/dashboard/billing?status=cancelled`,
     allow_promotion_codes: "true",
+    client_reference_id: session.workspaceId,
+    customer_email: session.email,
+    "metadata[workspace_id]": session.workspaceId,
+    "metadata[plan_id]": plan.id,
   });
+  if (botRequestId) body.set("metadata[bot_request_id]", botRequestId);
 
   const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST",
@@ -65,6 +72,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const session = (await res.json()) as { url?: string };
-  return Response.json({ url: session.url });
+  const checkoutSession = (await res.json()) as { url?: string };
+  return Response.json({ url: checkoutSession.url });
 }

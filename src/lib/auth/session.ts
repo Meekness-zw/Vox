@@ -9,10 +9,18 @@ export type SessionPayload = {
   exp: number;
 };
 
-const secret = () =>
-  new TextEncoder().encode(
-    process.env.SESSION_SECRET ?? "dev-only-insecure-secret-change-me"
-  );
+const sessionSecret = () => {
+  const configured = process.env.SESSION_SECRET?.trim();
+  if (configured) return configured;
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("SESSION_SECRET must be configured in production.");
+  }
+
+  return "dev-only-insecure-secret-change-me";
+};
+
+const secret = () => new TextEncoder().encode(sessionSecret());
 
 function b64url(bytes: ArrayBuffer | Uint8Array) {
   const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);

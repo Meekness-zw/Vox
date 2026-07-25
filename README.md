@@ -1,8 +1,8 @@
 # Vox — AI Voice & Chat Platform
 
 An AI-powered customer engagement platform: AI voice agents, AI chat agents,
-SMS follow-up, appointment booking, knowledge-base training, multi-language
-support, and conversation analytics.
+WhatsApp, SMS follow-up, real appointment booking (Google Calendar), invoicing,
+knowledge-base training, multi-language support, and conversation analytics.
 
 This repository is the **MVP** described in the product requirements — a
 focused Voice + Chat SaaS — built with the Next.js App Router and deployable to
@@ -57,9 +57,42 @@ without a key it uses a built-in knowledge-base responder. The frontend
 
 Point a Twilio number's Voice webhook at `/api/voice/incoming` and call it. It
 shares `buildSystemPrompt` and the knowledge base with the chat agent, so both
-channels behave identically.
+channels behave identically. The dialed number is looked up in `phone_numbers`
+(`src/lib/repository.ts`'s `getRoutingForNumber`) to resolve the right
+workspace + agent, so each business's own number reaches its own agent,
+knowledge base, calendar, and invoices — not a shared demo workspace.
 
-**3. Database** — set `DATABASE_URL` (e.g. Neon Postgres from the Vercel
+**3. WhatsApp** — `POST /api/whatsapp/incoming` runs the same agent brain over
+a Twilio WhatsApp sender. Since WhatsApp has no call-session concept, each
+turn loads/saves the conversation thread from Postgres (`wa_<workspace>_<from>`)
+instead of an in-memory session, and replies synchronously via TwiML
+`<Message>` — no separate Twilio REST call needed. Threads show up in the
+Conversations dashboard automatically (channel: "whatsapp").
+
+**4. Real appointment booking (Google Calendar)** — agents can actually book,
+not just talk about it. `src/lib/agent-tools.ts` exposes `check_availability`
+and `book_appointment` as AI SDK tool calls (`src/lib/agent-runtime.ts`); Google
+account **OAuth** is per-workspace (`/api/integrations/google/connect` +
+`/callback`, wired into Settings → Integrations). Without a connected
+calendar, availability falls back to a naive 9–5 slot generator against
+already-booked `appointments` rows, so booking works with zero config and
+upgrades to real Google Calendar sync — plus a real calendar event — the
+moment a workspace connects one. See `/dashboard/appointments`.
+
+**5. Invoices (PDF + email)** — once a service/price is agreed, agents call
+`create_invoice` (`src/lib/agent-tools.ts`) to generate a PDF (`pdf-lib`) and
+email it (`resend`) to the client. Without `RESEND_API_KEY` the invoice is
+still created and downloadable from `/dashboard/invoices` (or
+`/api/invoices/[id]/pdf`), just not auto-emailed. These are **client-facing**
+invoices (`client_invoices` table / `ClientInvoice` type) — distinct from
+Vox's own Stripe subscription invoices on the Billing page.
+
+Tool-calling is only enabled for authenticated workspace conversations (real
+phone calls, WhatsApp, and signed-in dashboard chat) — the public marketing
+`/demo` stays read-only so an anonymous visitor can't create real appointments
+or invoices.
+
+**6. Database** — set `DATABASE_URL` (e.g. Neon Postgres from the Vercel
 Marketplace) and the dashboard reads agents and conversations from Postgres; the
 Agent Builder's **Save** writes through a server action. Initialize + seed with:
 
@@ -71,7 +104,7 @@ Without `DATABASE_URL`, the same repository (`src/lib/repository.ts`) transparen
 returns in-memory demo data. The live **System status** panel on the dashboard
 overview shows which services are connected vs. running in demo mode.
 
-**4. RAG knowledge base** — the Knowledge page ingests URLs or pasted content:
+**7. RAG knowledge base** — the Knowledge page ingests URLs or pasted content:
 text is fetched/cleaned, chunked, embedded, and stored in Postgres with
 **pgvector** + a generated `tsvector`. `src/lib/rag.ts` retrieves the most
 relevant chunks per turn — **vector similarity** when embeddings are available,
@@ -79,7 +112,7 @@ relevant chunks per turn — **vector similarity** when embeddings are available
 into the agent's system prompt. So agents answer from *your* content, on both
 chat and voice.
 
-**5. Real conversations & analytics** — completed voice calls and authenticated
+**8. Real conversations & analytics** — completed voice calls and authenticated
 chats are persisted as `conversations` (transcript + heuristic summary,
 sentiment, outcome, action items; see `src/lib/conversation.ts`). The dashboard
 overview's KPIs and charts are computed live from those rows via SQL
@@ -99,8 +132,12 @@ Build: `npm run build` · Start: `npm start`
 
 ## Configuration (all optional)
 
-See `.env.example`. Set `AI_GATEWAY_API_KEY` to route the chat agent through a
-real model, and the `STRIPE_*` keys to enable real checkout on the Billing page.
+See `.env.example` for the full list. Set `AI_GATEWAY_API_KEY` to route agents
+through a real model, `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/
+`TWILIO_PHONE_NUMBER`/`TWILIO_WHATSAPP_NUMBER` for voice + WhatsApp,
+`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`TOKEN_ENCRYPTION_KEY` for Google
+Calendar booking, `RESEND_API_KEY` to email invoices, and the `STRIPE_*` keys
+to enable real checkout on the Billing page.
 
 ## Tech stack
 
@@ -109,6 +146,33 @@ real model, and the `STRIPE_*` keys to enable real checkout on the Billing page.
 - **Vercel AI SDK v6** + AI Gateway for the chat agent
 - **Recharts** for analytics
 - **lucide-react** icons
+- **Python 3.12 + FastAPI** for the bot reasoning and generation engine
+
+## Managed bot-building workflow
+
+Vox now separates the product UI from the bots. Next.js owns onboarding,
+accounts, the admin review queue, channels, and records. The Python service in
+`bot-service/` owns prompt construction, multilingual behavior, model calls,
+and bot generation.
+
+Clients submit a brief at `/dashboard/request-bot`. Vox staff listed in
+`VOX_ADMIN_EMAILS` review it at `/dashboard/admin/requests`, generate a draft
+through Python, test and improve it in the existing Agent Builder, and then
+publish it. The lifecycle is `submitted → under review → building → testing →
+approved → live`, with `changes requested` available when client input is
+needed.
+
+Run both processes locally. The first command is only needed once:
+
+```bash
+npm run bot:setup
+npm run dev:all
+```
+
+`dev:all` starts Next.js on port 3000 and the Python bot engine on port 8000.
+Running only `npm run dev` does not start the bot engine. For model-generated
+answers rather than the fast offline responder, set `AI_GATEWAY_API_KEY` (or
+`OPENAI_API_KEY`) in `.env` before starting both services.
 
 ## Deploying to Vercel
 
@@ -123,23 +187,30 @@ OIDC token without an explicit key.
 ## Implementation notes & next steps
 
 Auth + multi-tenancy, the RAG knowledge base, conversation capture, real
-analytics, the voice loop, Postgres persistence, and Stripe checkout are all
-wired end-to-end. Remaining production hardening:
+analytics, the voice loop, WhatsApp, Google Calendar booking, invoicing,
+Postgres persistence, and Stripe checkout are all wired end-to-end. Remaining
+production hardening:
 
 - **Voice state at scale** — call sessions live in an in-memory `Map` keyed by
   `CallSid` (`src/lib/voice/twiml.ts`); move to Redis/Postgres for multi-instance
-  deploys. Voice agents also serve a single default workspace today; map inbound
-  numbers → workspace for true per-tenant voice.
-- **Webhook security** — validate the `X-Twilio-Signature` header on voice
-  webhooks, and protect/remove `/api/admin/seed` after first run.
+  deploys. (WhatsApp already sidesteps this — its thread state is DB-backed.)
+- **Webhook security** — `TWILIO_AUTH_TOKEN` enables `X-Twilio-Signature`
+  validation (`src/lib/twilio-signature.ts`) on all three Twilio webhooks, but
+  it's skipped when unset; set it before production. Protect/remove
+  `/api/admin/seed` after first run.
 - **Model-generated summaries** — `analyzeConversation` is heuristic; swap in a
   model pass (the seam is `src/lib/conversation.ts`) when the gateway is funded.
 - **PDF ingestion** — the knowledge base ingests URLs and text today; add a PDF
   parser (e.g. `unpdf`) for the PDF/Document tiles.
-- **Stripe webhooks** — handle `checkout.session.completed` and
-  `customer.subscription.updated` to sync plan + usage, and meter usage limits.
-- **Channel expansion** — WhatsApp / Messenger / Instagram adapters; CRM OAuth;
-  real Google Calendar booking tool.
+- **Stripe metering** — checkout completion and invoice payment state are
+  synchronized, but usage-based limits still need enforcement and reporting.
+- **KPI reconciliation** — the Overview's `appointmentsBooked` KPI still comes
+  from the `analyzeConversation` heuristic, not the real `appointments` table;
+  worth swapping to a real count now that appointments are real.
+- **Real-time voice** — the phone loop is turn-based (`<Gather>`); barge-in/
+  interruption would need Twilio Media Streams, a bigger integration.
+- **Rate limiting** — no per-contact throttling on AI Gateway calls yet; worth
+  adding now that a call/message can trigger real calendar writes and emails.
 
 > Intentionally **not** built (per the requirements): website builder, lead
 > finder, proposal generator, agency/reseller/affiliate programs, white-label

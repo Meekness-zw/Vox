@@ -19,10 +19,30 @@ export function twimlResponse(inner: string) {
   );
 }
 
+/**
+ * Speech-recognition locale for a given agent language. This only affects
+ * what the caller is heard to say — replies are still always spoken in the
+ * fixed English `VOICE` above, since no evaluated TTS vendor (Twilio/Polly,
+ * Google Cloud TTS, ElevenLabs) has a Shona voice yet. Google's STT V2 lists
+ * sn-ZW under its Chirp/Chirp2 models, but Twilio's own docs don't explicitly
+ * confirm passthrough for this locale/speechModel combination — this is an
+ * unverified spike, not confirmed-working. Test on a real call before relying
+ * on it; Twilio should ignore/reject gracefully back to default if unsupported.
+ */
+function gatherLocale(agentLanguage: string): { language: string; speechModel?: string } {
+  if (/shona/i.test(agentLanguage)) {
+    return { language: "sn-ZW", speechModel: "googlev2_telephony" };
+  }
+  return { language: "en-US" };
+}
+
 /** Speak `text`, then listen for the caller's speech and post it to `action`. */
-export function sayAndGather(text: string, action: string) {
+export function sayAndGather(text: string, action: string, agentLanguage = "English (US)") {
+  const { language, speechModel } = gatherLocale(agentLanguage);
   return twimlResponse(
-    `<Gather input="speech" action="${escapeXml(action)}" method="POST" speechTimeout="auto" language="en-US">` +
+    `<Gather input="speech" action="${escapeXml(action)}" method="POST" speechTimeout="auto" language="${language}"${
+      speechModel ? ` speechModel="${speechModel}"` : ""
+    }>` +
       `<Say voice="${VOICE}">${escapeXml(text)}</Say>` +
       `</Gather>` +
       `<Say voice="${VOICE}">Sorry, I didn't catch that. Please call back anytime. Goodbye.</Say>` +
@@ -33,6 +53,11 @@ export function sayAndGather(text: string, action: string) {
 /** Speak a final message and end the call. */
 export function sayAndHangup(text: string) {
   return twimlResponse(`<Say voice="${VOICE}">${escapeXml(text)}</Say><Hangup/>`);
+}
+
+/** Reply to an inbound WhatsApp/SMS message synchronously (no REST call needed). */
+export function messageReply(text: string) {
+  return twimlResponse(`<Message>${escapeXml(text)}</Message>`);
 }
 
 /** Heuristic: did the agent (or caller) signal the call is over? */
@@ -46,6 +71,7 @@ export function isClosing(text: string) {
 // ---------------------------------------------------------------------------
 type CallSession = {
   agentId: string;
+  workspaceId: string;
   messages: SimpleMessage[];
   from: string;
   startedAt: string;
@@ -57,9 +83,15 @@ export function getSession(callSid: string) {
   return sessions.get(callSid);
 }
 
-export function startSession(callSid: string, agentId: string, from: string) {
+export function startSession(
+  callSid: string,
+  agentId: string,
+  from: string,
+  workspaceId = "ws_demo"
+) {
   const session: CallSession = {
     agentId,
+    workspaceId,
     messages: [],
     from,
     startedAt: new Date().toISOString(),

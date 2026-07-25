@@ -86,7 +86,7 @@ export default function LandingPage() {
         <div className="absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]" />
         <div className="relative mx-auto max-w-6xl px-4 pb-20 pt-20 sm:px-6 sm:pt-28">
           <div className="mx-auto max-w-3xl text-center">
-            <Badge variant="outline" className="mx-auto mb-5">
+            <Badge variant="outline" className="mx-auto mb-5 border-0">
               <Sparkles className="size-3.5 text-primary" />
               AI receptionist + chat in one platform
             </Badge>
@@ -267,11 +267,13 @@ function CallPreview() {
             <div className="text-xs text-muted-foreground">+1 (415) 555-0142</div>
           </div>
         </div>
-        <Badge variant="success">Answered by Ava</Badge>
+        <Badge variant="success" className="rounded-sm">
+          Answered by Micheal
+        </Badge>
       </div>
       <div className="space-y-3 py-4">
         <Bubble who="agent">
-          Thanks for calling Bright Smile Dental, this is Ava. How can I help?
+          Thanks for calling Bright Smile Dental, this is Micheal. How can I help?
         </Bubble>
         <Bubble who="caller">Hi, I&apos;d like to book a cleaning this week.</Bubble>
         <Bubble who="agent">

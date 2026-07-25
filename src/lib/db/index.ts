@@ -29,9 +29,14 @@ create extension if not exists vector;
 create table if not exists workspaces (
   id text primary key,
   name text not null,
-  plan text not null default 'growth',
+  plan text not null default 'free',
   created_at timestamptz not null default now()
 );
+alter table workspaces add column if not exists subscription_status text not null default 'free';
+alter table workspaces add column if not exists subscription_due_at timestamptz;
+alter table workspaces add column if not exists stripe_customer_id text;
+alter table workspaces add column if not exists stripe_subscription_id text;
+alter table workspaces alter column plan set default 'free';
 
 create table if not exists users (
   id text primary key,
@@ -59,6 +64,9 @@ create table if not exists agents (
   created_at timestamptz not null default now()
 );
 alter table agents add column if not exists workspace_id text not null default 'ws_demo';
+alter table agents add column if not exists billing_status text not null default 'unpaid';
+alter table agents add column if not exists price_cents integer not null default 0;
+alter table agents add column if not exists paid_through timestamptz;
 
 create table if not exists conversations (
   id text primary key,
@@ -103,6 +111,102 @@ create index if not exists knowledge_chunks_source_idx on knowledge_chunks (sour
 create index if not exists knowledge_chunks_ws_idx on knowledge_chunks (workspace_id);
 create index if not exists knowledge_chunks_tsv_idx on knowledge_chunks using gin (tsv);
 create index if not exists knowledge_chunks_vec_idx on knowledge_chunks using hnsw (embedding vector_cosine_ops);
+
+-- Maps a Twilio number (voice or WhatsApp) to the workspace + default agent
+-- that should answer it, so a business's own number always reaches its own
+-- agent/knowledge base/calendar/invoices instead of a shared demo workspace.
+create table if not exists phone_numbers (
+  id text primary key,
+  workspace_id text not null,
+  number text not null,
+  channel text not null,
+  agent_id text not null,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists phone_numbers_number_channel_idx on phone_numbers (number, channel);
+create index if not exists phone_numbers_ws_idx on phone_numbers (workspace_id);
+
+create table if not exists calendar_connections (
+  workspace_id text primary key,
+  provider text not null default 'google',
+  calendar_id text not null default 'primary',
+  refresh_token text not null,
+  access_token text,
+  access_token_expires_at timestamptz,
+  timezone text not null default 'America/Los_Angeles',
+  connected_at timestamptz not null default now()
+);
+
+create table if not exists appointments (
+  id text primary key,
+  workspace_id text not null default 'ws_demo',
+  agent_id text not null,
+  conversation_id text,
+  contact_name text not null,
+  contact_phone text,
+  contact_email text,
+  service text not null,
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,
+  status text not null default 'confirmed',
+  google_event_id text,
+  created_at timestamptz not null default now()
+);
+create index if not exists appointments_ws_idx on appointments (workspace_id);
+create index if not exists appointments_starts_idx on appointments (starts_at);
+
+create table if not exists client_invoices (
+  id text primary key,
+  workspace_id text not null default 'ws_demo',
+  agent_id text,
+  conversation_id text,
+  contact_name text not null,
+  contact_email text not null,
+  line_items jsonb not null default '[]'::jsonb,
+  subtotal_cents integer not null default 0,
+  total_cents integer not null default 0,
+  status text not null default 'sent',
+  notes text,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
+);
+create index if not exists client_invoices_ws_idx on client_invoices (workspace_id);
+
+create table if not exists bot_requests (
+  id text primary key,
+  workspace_id text not null,
+  business_name text not null,
+  industry text not null,
+  description text not null,
+  services text not null,
+  business_hours text not null,
+  languages text not null,
+  tone text not null,
+  escalation text not null,
+  channels jsonb not null default '[]'::jsonb,
+  contact_name text not null,
+  contact_email text not null,
+  status text not null default 'submitted',
+  admin_notes text not null default '',
+  agent_id text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists bot_requests_ws_idx on bot_requests (workspace_id);
+create index if not exists bot_requests_status_idx on bot_requests (status, created_at desc);
+
+create table if not exists company_profiles (
+  workspace_id text primary key,
+  business_name text not null,
+  industry text not null,
+  description text not null,
+  services text not null,
+  business_hours text not null,
+  languages text not null,
+  tone text not null,
+  escalation text not null,
+  updated_at timestamptz not null default now()
+);
 `;
 
 export async function initSchema() {

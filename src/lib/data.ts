@@ -1,5 +1,7 @@
 import type {
   Agent,
+  Appointment,
+  ClientInvoice,
   Conversation,
   KnowledgeSource,
   SmsCampaign,
@@ -18,14 +20,14 @@ export const agents: Agent[] = [
     type: "voice",
     status: "active",
     language: "English (US)",
-    voice: "Ava — warm, professional",
+    voice: "Micheal — calm, professional",
     personality: "Friendly, concise, reassuring",
     greeting:
-      "Thanks for calling Bright Smile Dental, this is Ava. How can I help you today?",
+      "Thanks for calling Bright Smile Dental, this is Micheal. How can I help you today?",
     businessHours: "Mon–Fri 8am–6pm, Sat 9am–1pm",
     escalation: "Transfer to front desk for billing disputes or emergencies.",
     systemPrompt:
-      "You are Ava, the AI phone receptionist for Bright Smile Dental. Answer questions about services, hours, and insurance, capture caller details, and book appointments. Keep replies short and natural for a phone call.",
+      "You are Micheal, the AI phone receptionist for Bright Smile Dental. Answer questions about services, hours, and insurance, capture caller details, and book appointments. Keep replies short and natural for a phone call.",
     createdAt: "2026-04-12T10:00:00Z",
   },
   {
@@ -77,7 +79,7 @@ export const conversations: Conversation[] = [
       "Verify Delta Dental coverage before visit",
     ],
     transcript: [
-      { role: "agent", text: "Thanks for calling Bright Smile Dental, this is Ava. How can I help?" },
+      { role: "agent", text: "Thanks for calling Bright Smile Dental, this is Micheal. How can I help?" },
       { role: "caller", text: "Hi, I'd like to book a cleaning sometime this week." },
       { role: "agent", text: "I can help with that. Are mornings or afternoons better for you?" },
       { role: "caller", text: "Mornings work best." },
@@ -160,6 +162,52 @@ export const knowledgeSources: KnowledgeSource[] = [
   { id: "kb_5", name: "After-hours protocol", type: "Manual Q&A", status: "synced", chunks: 9, updatedAt: "2026-05-20T09:00:00Z" },
 ];
 
+export const appointments: Appointment[] = [
+  {
+    id: "ap_2201",
+    agentId: "ag_front_desk",
+    conversationId: "cv_1029",
+    contactName: "Jamie Rivera",
+    contactPhone: "+1 (415) 555-0142",
+    service: "Cleaning",
+    startsAt: "2026-06-05T17:00:00Z",
+    endsAt: "2026-06-05T17:45:00Z",
+    status: "confirmed",
+    createdAt: "2026-06-02T14:51:00Z",
+  },
+  {
+    id: "ap_2202",
+    agentId: "ag_web_chat",
+    conversationId: "cv_1026",
+    contactName: "Returning patient",
+    contactPhone: "+1 (917) 555-0110",
+    service: "Cleaning (rescheduled)",
+    startsAt: "2026-06-09T21:00:00Z",
+    endsAt: "2026-06-09T21:45:00Z",
+    status: "confirmed",
+    createdAt: "2026-06-01T19:44:00Z",
+  },
+];
+
+export const clientInvoices: ClientInvoice[] = [
+  {
+    id: "inv_3301",
+    agentId: "ag_front_desk",
+    conversationId: "cv_1029",
+    contactName: "Jamie Rivera",
+    contactEmail: "jamie.rivera@example.com",
+    lineItems: [
+      { description: "Routine cleaning", quantity: 1, unitPriceCents: 12000 },
+    ],
+    subtotalCents: 12000,
+    totalCents: 12000,
+    status: "sent",
+    notes: "Thanks for visiting Bright Smile Dental!",
+    createdAt: "2026-06-02T15:05:00Z",
+    sentAt: "2026-06-02T15:05:00Z",
+  },
+];
+
 export const smsCampaigns: SmsCampaign[] = [
   { id: "sms_1", name: "Visit confirmations", type: "Appointment confirmation", status: "active", sent: 1240, delivered: 1228, replied: 312 },
   { id: "sms_2", name: "24h reminders", type: "Appointment reminder", status: "active", sent: 980, delivered: 971, replied: 188 },
@@ -215,4 +263,12 @@ export function getAgent(id: string) {
 
 export function getConversation(id: string) {
   return conversations.find((c) => c.id === id);
+}
+
+export function getAppointment(id: string) {
+  return appointments.find((a) => a.id === id);
+}
+
+export function getClientInvoice(id: string) {
+  return clientInvoices.find((i) => i.id === id);
 }

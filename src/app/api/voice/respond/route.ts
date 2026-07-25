@@ -1,8 +1,11 @@
-import { agents, getAgent } from "@/lib/data";
 import { generateReply } from "@/lib/agent-runtime";
 import { retrieveContext } from "@/lib/rag";
 import { buildConversation } from "@/lib/conversation";
-import { upsertConversation } from "@/lib/repository";
+import {
+  getAgentById,
+  getRoutingForNumber,
+  upsertConversation,
+} from "@/lib/repository";
 import {
   sayAndGather,
   sayAndHangup,
@@ -11,6 +14,7 @@ import {
   startSession,
   endSession,
 } from "@/lib/voice/twiml";
+import { formDataToParams, isValidTwilioRequest, publicWebhookUrl } from "@/lib/twilio-signature";
 
 export const maxDuration = 30;
 
@@ -23,30 +27,54 @@ export const maxDuration = 30;
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const form = await req.formData();
+
+  if (
+    !isValidTwilioRequest({
+      signatureHeader: req.headers.get("x-twilio-signature"),
+      url: publicWebhookUrl(req),
+      params: formDataToParams(form),
+    })
+  ) {
+    return new Response("Invalid signature", { status: 403 });
+  }
+
   const callSid = String(form.get("CallSid") ?? `local_${Date.now()}`);
   const from = String(form.get("From") ?? "unknown");
+  const to = String(form.get("To") ?? "unknown");
   const speech = String(form.get("SpeechResult") ?? "").trim();
 
-  const agentId =
-    url.searchParams.get("agentId") ??
-    getSession(callSid)?.agentId ??
-    agents.find((a) => a.type === "voice")?.id ??
-    agents[0].id;
-  const agent = getAgent(agentId) ?? agents[0];
+  let session = getSession(callSid);
+  if (!session) {
+    // Session lost (e.g. cold start) — re-resolve the route and start fresh.
+    const route = await getRoutingForNumber(to, "voice");
+    const workspaceId = route?.workspaceId ?? "ws_demo";
+    const agentId = url.searchParams.get("agentId") ?? route?.agentId ?? "";
+    session = startSession(callSid, agentId, from, workspaceId);
+  }
 
-  const session = getSession(callSid) ?? startSession(callSid, agentId, from);
+  const agentId = url.searchParams.get("agentId") ?? session.agentId;
+  const agent = await getAgentById(agentId, session.workspaceId);
+  if (!agent) {
+    return sayAndHangup("Sorry, something went wrong on our end. Please call back.");
+  }
 
   // No speech detected — re-prompt once.
   if (!speech) {
     return sayAndGather(
       "Sorry, I didn't quite hear that. Could you say that again?",
-      `/api/voice/respond?agentId=${encodeURIComponent(agentId)}`
+      `/api/voice/respond?agentId=${encodeURIComponent(agentId)}`,
+      agent.language
     );
   }
 
   session.messages.push({ role: "user", content: speech });
-  const ctx = await retrieveContext("ws_demo", speech);
-  const reply = await generateReply(agent, session.messages, ctx?.text);
+  const ctx = await retrieveContext(session.workspaceId, speech);
+  const reply = await generateReply(agent, session.messages, ctx?.text, {
+    workspaceId: session.workspaceId,
+    agentId: agent.id,
+    conversationId: "cv_" + callSid,
+    contactPhone: from,
+  });
   session.messages.push({ role: "assistant", content: reply });
 
   // End the call when the caller says goodbye or the agent closes out.
@@ -67,13 +95,14 @@ export async function POST(req: Request) {
         messages: ended.messages,
       });
       // Persist the completed call so it appears in the dashboard.
-      await upsertConversation(record, "ws_demo");
+      await upsertConversation(record, ended.workspaceId);
     }
     return sayAndHangup(reply);
   }
 
   return sayAndGather(
     reply,
-    `/api/voice/respond?agentId=${encodeURIComponent(agentId)}`
+    `/api/voice/respond?agentId=${encodeURIComponent(agentId)}`,
+    agent.language
   );
 }

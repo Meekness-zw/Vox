@@ -23,8 +23,9 @@ export function DemoExperience() {
       {mode === "voice" ? (
         <VoiceAgent
           agentId="ag_front_desk"
-          agentName="Ava"
-          greeting="Thanks for calling Bright Smile Dental, this is Ava. How can I help you today?"
+          agentName="Micheal"
+          agentVoice="demo"
+          greeting="Thanks for calling Bright Smile Dental, this is Micheal. How can I help you today?"
         />
       ) : (
         <ChatPanel agentName="Bright Smile Concierge" agentId="ag_web_chat" />

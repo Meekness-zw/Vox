@@ -1,5 +1,8 @@
-import { generateText } from "ai";
+import type { ToolContext } from "./agent-tools";
+import { requestPythonReply } from "./python-bot";
 import type { Agent } from "./types";
+
+export type { ToolContext };
 
 export type SimpleMessage = { role: "user" | "assistant"; content: string };
 
@@ -23,7 +26,16 @@ BOOKING: Appointments can be booked Mon–Sat during business hours. Typical ava
 PARKING: Free validated parking in the building garage.
 `.trim();
 
-export function buildSystemPrompt(agent: Agent, knowledge = demoKnowledgeBase) {
+/** Agents whose `language` names more than one language get a code-switching instruction. */
+function isMultilingual(language: string) {
+  return /multi-language|\+|code-switch|shona/i.test(language);
+}
+
+export function buildSystemPrompt(
+  agent: Agent,
+  knowledge = demoKnowledgeBase,
+  toolsEnabled = false
+) {
   return [
     `You are "${agent.name}", an AI ${agent.type} agent for a business.`,
     `Personality: ${agent.personality}.`,
@@ -33,8 +45,16 @@ export function buildSystemPrompt(agent: Agent, knowledge = demoKnowledgeBase) {
     `Business hours: ${agent.businessHours}.`,
     `Escalation rule: ${agent.escalation}`,
     "",
+    ...(isMultilingual(agent.language)
+      ? [
+          `Language: ${agent.language}. Detect the language(s) the person is writing or speaking in this turn — including natural code-switching between English and Shona — and reply fluently in the same language or mix. Never force a translation the person didn't ask for.`,
+          "",
+        ]
+      : []),
     "Use ONLY the following knowledge base to answer questions about the business. If something is not covered, say you'll have a team member follow up and offer to take their name and number.",
-    "When a caller wants to book, confirm the service, offer a specific day/time, and confirm the booking. Capture their name and phone/email for follow-up.",
+    toolsEnabled
+      ? "When someone wants to book, use the check_availability and book_appointment tools to actually reserve a real slot — never just say it's booked without calling book_appointment. Once a service and price are agreed and you have their email, use create_invoice to send them a real invoice. Always confirm details back to the person after a tool call succeeds, and speak/write naturally about the result rather than describing that you used a tool."
+      : "When a caller wants to book, confirm the service, offer a specific day/time, and confirm the booking. Capture their name and phone/email for follow-up.",
     "",
     "KNOWLEDGE BASE:",
     knowledge,
@@ -60,41 +80,22 @@ export async function generateReply(
   agent: Agent,
   messages: SimpleMessage[],
   /** Retrieved knowledge-base context for this turn (from RAG), if any. */
-  retrievedKnowledge?: string
+  retrievedKnowledge?: string,
+  /**
+   * When present, enables tool-calling (real appointment booking + invoicing)
+   * scoped to this workspace/conversation. Omit to keep today's talk-only
+   * behavior (e.g. the public marketing demo, which should never write data).
+   */
+  toolContext?: ToolContext
 ): Promise<string> {
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
   const knowledge = retrievedKnowledge?.trim() || demoKnowledgeBase;
-
-  if (hasModelCredentials()) {
-    try {
-      const { text } = await generateText({
-        model: DEFAULT_MODEL,
-        system: buildSystemPrompt(agent, knowledge),
-        messages,
-      });
-      return text.trim();
-    } catch {
-      // fall through to the offline responder
-    }
-  }
-
-  // Offline: prefer a crisp keyword answer; if none matches but RAG found
-  // relevant content in the workspace's knowledge base, answer extractively
-  // from it; otherwise use the generic responder.
-  const input = lastUser?.content ?? "";
-  const kw = keywordMatch(input, agent.name);
-  if (kw) return kw;
-  if (retrievedKnowledge?.trim()) {
-    return extractiveAnswer(retrievedKnowledge, agent.name);
-  }
-  return knowledgeReply(input, agent.name);
-}
-
-/** Crude extractive answer used as an offline fallback for RAG hits. */
-function extractiveAnswer(context: string, agentName: string): string {
-  const top = context.split(/\n\n---\n\n/)[0].replace(/\s+/g, " ").trim();
-  const snippet = top.length > 360 ? top.slice(0, 357) + "…" : top;
-  return `${snippet}\n\nIs there anything else I can help you with? — ${agentName}`;
+  return requestPythonReply({
+    workspaceId: toolContext?.workspaceId ?? "ws_demo",
+    agent,
+    messages,
+    knowledge,
+    channel: agent.type === "voice" ? "voice" : "chat",
+  });
 }
 
 /**

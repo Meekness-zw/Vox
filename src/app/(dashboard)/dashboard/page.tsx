@@ -168,7 +168,7 @@ export default async function OverviewPage() {
           </Card>
         </div>
 
-        <SystemStatus />
+        <SystemStatus workspaceId={session?.workspaceId} />
       </div>
     </>
   );

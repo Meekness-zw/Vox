@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PlanSwitcher } from "@/components/dashboard/plan-switcher";
 import { plans } from "@/lib/pricing";
-
-const CURRENT_PLAN = "growth";
+import { requireSession } from "@/lib/auth/session-cookies";
+import { getWorkspaceSubscription } from "@/lib/repository";
+import { confirmStripeCheckout } from "@/lib/stripe";
 
 const usage = [
   { label: "Voice minutes", used: 1842, limit: 3000, unit: "min" },
@@ -19,22 +20,46 @@ const invoices = [
   { id: "INV-2026-004", date: "Apr 1, 2026", amount: "$99.00", status: "Paid" },
 ];
 
-export default function BillingPage() {
-  const current = plans.find((p) => p.id === CURRENT_PLAN)!;
+export default async function BillingPage({ searchParams }: {
+  searchParams: Promise<{ required?: string; botRequest?: string; status?: string; session_id?: string }>;
+}) {
+  const session = await requireSession();
+  const params = await searchParams;
+  if (params.status === "success" && params.session_id) {
+    await confirmStripeCheckout(params.session_id, session.workspaceId);
+  }
+  const subscription = await getWorkspaceSubscription(session.workspaceId);
+  const current = plans.find((p) => p.id === subscription.plan);
 
   return (
     <>
       <Topbar title="Billing" />
       <div className="space-y-6 p-4 sm:p-6">
+        {params.required === "1" && (
+          <div className="rounded-lg border border-primary/25 bg-accent p-4 text-sm">
+            <strong>Payment is required for a customized bot.</strong>{" "}
+            Choose a plan below. You can continue using the public Vox demo for free.
+          </div>
+        )}
+        {params.status === "success" && (
+          <div className="rounded-lg border border-success/25 bg-green-50 p-4 text-sm text-green-800">
+            Payment received. Stripe is confirming your subscription and your bot request will move to review automatically.
+          </div>
+        )}
         {/* Current plan + usage */}
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
-                {current.name} plan <Badge variant="success">Active</Badge>
+                {current?.name ?? "Free testing"} plan{" "}
+                <Badge variant={subscription.status === "active" ? "success" : "muted"}>
+                  {subscription.status.replaceAll("_", " ")}
+                </Badge>
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                {current.priceLabel}/month · renews Jul 1, 2026
+                {current
+                  ? `${current.priceLabel}/month${subscription.dueAt ? ` · renews ${new Date(subscription.dueAt).toLocaleDateString()}` : ""}`
+                  : "Test Vox for free. Subscribe when you want your own tailored bot."}
               </p>
             </div>
           </CardHeader>
@@ -64,7 +89,7 @@ export default function BillingPage() {
         {/* Plans */}
         <div>
           <h2 className="mb-3 text-sm font-semibold">Change plan</h2>
-          <PlanSwitcher currentPlanId={CURRENT_PLAN} />
+          <PlanSwitcher currentPlanId={subscription.plan} botRequestId={params.botRequest} />
         </div>
 
         {/* Invoices */}

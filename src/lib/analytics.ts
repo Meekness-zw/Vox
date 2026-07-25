@@ -82,22 +82,28 @@ function computeKpis(rows: Row[]) {
   };
 }
 
-export async function getAnalytics(workspaceId = "ws_demo"): Promise<Analytics> {
+export async function getAnalytics(workspaceId = "ws_demo", agentId?: string): Promise<Analytics> {
   if (!sql) {
+    const rows = mockSeries;
     return {
       live: false,
       kpis: mockKpis,
-      volume: mockSeries,
+      volume: rows,
       outcomes: mockOutcomes,
     };
   }
 
   const since = new Date(Date.now() - 28 * DAY).toISOString();
-  const rows = (await sql`
-    select started_at, channel, outcome, duration_sec, sentiment
-    from conversations
-    where workspace_id = ${workspaceId} and started_at >= ${since}
-  `) as unknown as Row[];
+  const rows = (agentId
+    ? await sql`
+        select started_at, channel, outcome, duration_sec, sentiment
+        from conversations where workspace_id = ${workspaceId}
+          and agent_id = ${agentId} and started_at >= ${since}
+      `
+    : await sql`
+        select started_at, channel, outcome, duration_sec, sentiment
+        from conversations where workspace_id = ${workspaceId} and started_at >= ${since}
+      `) as unknown as Row[];
 
   const now = Date.now();
   const inWindow = (r: Row, startDaysAgo: number, endDaysAgo: number) => {

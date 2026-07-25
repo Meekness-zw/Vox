@@ -4,6 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:all": "node scripts/dev-all.mjs",
+    "bot:setup": "/usr/bin/python3 -m venv bot-service/.venv && bot-service/.venv/bin/pip install -r bot-service/requirements.txt",
+    "bot:dev": "bot-service/.venv/bin/uvicorn app.main:app --app-dir bot-service --host 127.0.0.1 --port 8000 --env-file .env --reload",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -13,12 +16,15 @@
     "ai": "^6.0.194",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "googleapis": "^144.0.0",
     "lucide-react": "^1.17.0",
     "next": "16.2.7",
+    "pdf-lib": "^1.17.1",
     "postgres": "^3.4.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
+    "resend": "^4.0.1",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.4.3"
   },
