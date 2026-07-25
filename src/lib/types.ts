@@ -74,6 +74,69 @@ export type ClientInvoice = {
   sentAt?: string;
 };
 
+export type BusinessDocumentType =
+  | "invoice"
+  | "receipt"
+  | "quotation"
+  | "delivery_order"
+  | "purchase_order"
+  | "credit_note";
+
+export type BusinessDocumentStatus =
+  | "draft"
+  | "issued"
+  | "sent"
+  | "accepted"
+  | "paid"
+  | "fulfilled"
+  | "void";
+
+export type DocumentLineItem = {
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+  sku?: string;
+};
+
+export type BusinessDocument = {
+  id: string;
+  agentId?: string;
+  conversationId?: string;
+  type: BusinessDocumentType;
+  number: string;
+  status: BusinessDocumentStatus;
+  contactName: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactAddress?: string;
+  lineItems: DocumentLineItem[];
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  currency: string;
+  notes?: string;
+  metadata: Record<string, string>;
+  issueDate: string;
+  dueDate?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DocumentTemplate = {
+  businessName: string;
+  logoUrl?: string;
+  primaryColor: string;
+  accentColor: string;
+  currency: string;
+  address: string;
+  phone: string;
+  email: string;
+  taxNumber: string;
+  footer: string;
+  paymentTerms: string;
+  updatedAt: string;
+};
+
 export type SmsCampaign = {
   id: string;
   name: string;

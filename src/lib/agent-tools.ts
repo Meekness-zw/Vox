@@ -3,6 +3,7 @@ import { z } from "zod";
 import { bookAppointment, getAvailability } from "@/lib/calendar";
 import { createInvoice } from "@/lib/invoices";
 import { getWorkspaceName } from "@/lib/repository";
+import { createBusinessDocument } from "@/lib/business-documents";
 
 /**
  * Everything the agent needs to act on behalf of one workspace/conversation.
@@ -137,6 +138,56 @@ export function buildTools(ctx: ToolContext): ToolSet {
           };
         } catch {
           return { error: "Couldn't create that invoice right now." };
+        }
+      },
+    }),
+
+    create_business_document: tool({
+      description:
+        "Create and save a branded quotation, receipt, delivery order, purchase order, or credit note for the customer. Confirm all names, quantities and prices before calling this tool. Use create_invoice for invoices that must also be emailed.",
+      inputSchema: z.object({
+        type: z.enum([
+          "receipt",
+          "quotation",
+          "delivery_order",
+          "purchase_order",
+          "credit_note",
+        ]),
+        contactName: z.string(),
+        contactEmail: z.string().optional(),
+        contactPhone: z.string().optional(),
+        contactAddress: z.string().optional(),
+        lineItems: z.array(z.object({
+          description: z.string(),
+          quantity: z.number().positive().default(1),
+          unitPriceCents: z.number().nonnegative(),
+          sku: z.string().optional(),
+        })).min(1),
+        taxRatePercent: z.number().min(0).default(0),
+        dueDate: z.string().optional().describe("YYYY-MM-DD"),
+        notes: z.string().optional(),
+        deliveryReference: z.string().optional(),
+      }),
+      execute: async (input) => {
+        try {
+          const document = await createBusinessDocument({
+            workspaceId: ctx.workspaceId,
+            agentId: ctx.agentId,
+            conversationId: ctx.conversationId,
+            ...input,
+            contactEmail: input.contactEmail ?? ctx.contactEmail,
+            contactPhone: input.contactPhone ?? ctx.contactPhone,
+            metadata: { deliveryReference: input.deliveryReference ?? "" },
+          });
+          return {
+            documentId: document.id,
+            documentNumber: document.number,
+            type: document.type,
+            totalCents: document.totalCents,
+            saved: true,
+          };
+        } catch {
+          return { error: "Couldn't create that business document right now." };
         }
       },
     }),

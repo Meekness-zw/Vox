@@ -8,7 +8,6 @@ import postgres from "postgres";
 const connectionString = process.env.DATABASE_URL;
 
 declare global {
-  // eslint-disable-next-line no-var
   var __voxSql: ReturnType<typeof postgres> | undefined;
 }
 
@@ -17,6 +16,10 @@ export const sql = connectionString
       ssl: "require",
       max: 5,
       idle_timeout: 20,
+      // Supabase's transaction-mode Supavisor pooler (port 6543) does not
+      // support prepared statements. Disabling them also works with direct
+      // and session-mode connections, so one DATABASE_URL works everywhere.
+      prepare: false,
     }))
   : null;
 
@@ -172,6 +175,56 @@ create table if not exists client_invoices (
 );
 create index if not exists client_invoices_ws_idx on client_invoices (workspace_id);
 
+-- Reusable business documents. The JSON line-items/content fields let Vox add
+-- new document types without a schema migration while every row remains
+-- tenant-scoped and auditable.
+create table if not exists document_templates (
+  workspace_id text primary key,
+  business_name text not null default '',
+  logo_url text,
+  primary_color text not null default '#6D5DFB',
+  accent_color text not null default '#111827',
+  currency text not null default 'USD',
+  address text not null default '',
+  phone text not null default '',
+  email text not null default '',
+  tax_number text not null default '',
+  footer text not null default 'Thank you for your business.',
+  payment_terms text not null default 'Payment due on receipt.',
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists business_documents (
+  id text primary key,
+  workspace_id text not null,
+  agent_id text,
+  conversation_id text,
+  type text not null,
+  number text not null,
+  status text not null default 'draft',
+  contact_name text not null,
+  contact_email text,
+  contact_phone text,
+  contact_address text,
+  line_items jsonb not null default '[]'::jsonb,
+  subtotal_cents integer not null default 0,
+  tax_cents integer not null default 0,
+  total_cents integer not null default 0,
+  currency text not null default 'USD',
+  notes text,
+  metadata jsonb not null default '{}'::jsonb,
+  issue_date date not null default current_date,
+  due_date date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists business_documents_ws_number_idx
+  on business_documents (workspace_id, number);
+create index if not exists business_documents_ws_created_idx
+  on business_documents (workspace_id, created_at desc);
+create index if not exists business_documents_conversation_idx
+  on business_documents (conversation_id);
+
 create table if not exists bot_requests (
   id text primary key,
   workspace_id text not null,
@@ -207,6 +260,25 @@ create table if not exists company_profiles (
   escalation text not null,
   updated_at timestamptz not null default now()
 );
+
+-- Supabase exposes tables in the public schema through its Data API. Vox uses
+-- a trusted server-side PostgreSQL connection and its own workspace checks, so
+-- RLS is enabled without public policies: anon/authenticated Data API callers
+-- get no table access while the database owner used by the backend can operate.
+alter table workspaces enable row level security;
+alter table users enable row level security;
+alter table agents enable row level security;
+alter table conversations enable row level security;
+alter table knowledge_sources enable row level security;
+alter table knowledge_chunks enable row level security;
+alter table phone_numbers enable row level security;
+alter table calendar_connections enable row level security;
+alter table appointments enable row level security;
+alter table client_invoices enable row level security;
+alter table document_templates enable row level security;
+alter table business_documents enable row level security;
+alter table bot_requests enable row level security;
+alter table company_profiles enable row level security;
 `;
 
 export async function initSchema() {

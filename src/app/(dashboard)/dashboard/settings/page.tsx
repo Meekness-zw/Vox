@@ -18,7 +18,7 @@ const team = [
 
 const staticIntegrations = [
   { name: "Microsoft Outlook", category: "Calendar", connected: false },
-  { name: "HubSpot", category: "CRM", connected: true },
+  { name: "HubSpot", category: "CRM", connected: false },
   { name: "Salesforce", category: "CRM", connected: false },
   { name: "Zoho", category: "CRM", connected: false },
   { name: "Pipedrive", category: "CRM", connected: false },

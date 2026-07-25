@@ -19,9 +19,13 @@ import type {
   AdminClientRecord,
   CompanyProfile,
   SubscriptionStatus,
+  BusinessDocument,
+  DocumentTemplate,
 } from "@/lib/types";
 
 const demoBotRequests: BotRequest[] = [];
+const demoBusinessDocuments: BusinessDocument[] = [];
+const demoDocumentTemplates = new Map<string, DocumentTemplate>();
 
 /* ---- row mappers ---------------------------------------------------------- */
 
@@ -346,6 +350,143 @@ export async function insertClientInvoice(
     values (${inv.id}, ${workspaceId}, ${inv.agentId ?? null}, ${inv.conversationId ?? null},
       ${inv.contactName}, ${inv.contactEmail}, ${sql.json(inv.lineItems)}, ${inv.subtotalCents},
       ${inv.totalCents}, ${inv.status}, ${inv.notes ?? null}, ${inv.createdAt}, ${inv.sentAt ?? null})
+  `;
+}
+
+/* ---- business documents and branding ------------------------------------- */
+
+const iso = (value: unknown) =>
+  value instanceof Date ? value.toISOString() : String(value);
+
+function rowToBusinessDocument(r: Record<string, unknown>): BusinessDocument {
+  return {
+    id: r.id as string,
+    agentId: (r.agent_id as string) ?? undefined,
+    conversationId: (r.conversation_id as string) ?? undefined,
+    type: r.type as BusinessDocument["type"],
+    number: r.number as string,
+    status: r.status as BusinessDocument["status"],
+    contactName: r.contact_name as string,
+    contactEmail: (r.contact_email as string) ?? undefined,
+    contactPhone: (r.contact_phone as string) ?? undefined,
+    contactAddress: (r.contact_address as string) ?? undefined,
+    lineItems: (r.line_items as BusinessDocument["lineItems"]) ?? [],
+    subtotalCents: Number(r.subtotal_cents),
+    taxCents: Number(r.tax_cents),
+    totalCents: Number(r.total_cents),
+    currency: r.currency as string,
+    notes: (r.notes as string) ?? undefined,
+    metadata: (r.metadata as Record<string, string>) ?? {},
+    issueDate: String(r.issue_date).slice(0, 10),
+    dueDate: r.due_date ? String(r.due_date).slice(0, 10) : undefined,
+    createdAt: iso(r.created_at),
+    updatedAt: iso(r.updated_at),
+  };
+}
+
+export async function listBusinessDocuments(
+  workspaceId = "ws_demo"
+): Promise<BusinessDocument[]> {
+  if (!sql) return demoBusinessDocuments;
+  const rows = await sql`
+    select * from business_documents
+    where workspace_id = ${workspaceId}
+    order by created_at desc
+  `;
+  return rows.map(rowToBusinessDocument);
+}
+
+export async function getBusinessDocumentById(
+  id: string,
+  workspaceId = "ws_demo"
+): Promise<BusinessDocument | undefined> {
+  if (!sql) return demoBusinessDocuments.find((item) => item.id === id);
+  const rows = await sql`
+    select * from business_documents
+    where id = ${id} and workspace_id = ${workspaceId}
+    limit 1
+  `;
+  return rows.length ? rowToBusinessDocument(rows[0]) : undefined;
+}
+
+export async function insertBusinessDocument(
+  document: BusinessDocument,
+  workspaceId = "ws_demo"
+): Promise<void> {
+  if (!sql) {
+    demoBusinessDocuments.unshift(document);
+    return;
+  }
+  await sql`
+    insert into business_documents (
+      id, workspace_id, agent_id, conversation_id, type, number, status,
+      contact_name, contact_email, contact_phone, contact_address, line_items,
+      subtotal_cents, tax_cents, total_cents, currency, notes, metadata,
+      issue_date, due_date, created_at, updated_at
+    ) values (
+      ${document.id}, ${workspaceId}, ${document.agentId ?? null},
+      ${document.conversationId ?? null}, ${document.type}, ${document.number},
+      ${document.status}, ${document.contactName}, ${document.contactEmail ?? null},
+      ${document.contactPhone ?? null}, ${document.contactAddress ?? null},
+      ${sql.json(document.lineItems)}, ${document.subtotalCents}, ${document.taxCents},
+      ${document.totalCents}, ${document.currency}, ${document.notes ?? null},
+      ${sql.json(document.metadata)}, ${document.issueDate}, ${document.dueDate ?? null},
+      ${document.createdAt}, ${document.updatedAt}
+    )
+  `;
+}
+
+function rowToDocumentTemplate(r: Record<string, unknown>): DocumentTemplate {
+  return {
+    businessName: r.business_name as string,
+    logoUrl: (r.logo_url as string) ?? undefined,
+    primaryColor: r.primary_color as string,
+    accentColor: r.accent_color as string,
+    currency: r.currency as string,
+    address: r.address as string,
+    phone: r.phone as string,
+    email: r.email as string,
+    taxNumber: r.tax_number as string,
+    footer: r.footer as string,
+    paymentTerms: r.payment_terms as string,
+    updatedAt: iso(r.updated_at),
+  };
+}
+
+export async function getDocumentTemplate(
+  workspaceId = "ws_demo"
+): Promise<DocumentTemplate | undefined> {
+  if (!sql) return demoDocumentTemplates.get(workspaceId);
+  const rows = await sql`
+    select * from document_templates where workspace_id = ${workspaceId} limit 1
+  `;
+  return rows.length ? rowToDocumentTemplate(rows[0]) : undefined;
+}
+
+export async function upsertDocumentTemplate(
+  template: DocumentTemplate,
+  workspaceId = "ws_demo"
+): Promise<void> {
+  if (!sql) {
+    demoDocumentTemplates.set(workspaceId, template);
+    return;
+  }
+  await sql`
+    insert into document_templates (
+      workspace_id, business_name, logo_url, primary_color, accent_color,
+      currency, address, phone, email, tax_number, footer, payment_terms, updated_at
+    ) values (
+      ${workspaceId}, ${template.businessName}, ${template.logoUrl ?? null},
+      ${template.primaryColor}, ${template.accentColor}, ${template.currency},
+      ${template.address}, ${template.phone}, ${template.email}, ${template.taxNumber},
+      ${template.footer}, ${template.paymentTerms}, ${template.updatedAt}
+    )
+    on conflict (workspace_id) do update set
+      business_name = excluded.business_name, logo_url = excluded.logo_url,
+      primary_color = excluded.primary_color, accent_color = excluded.accent_color,
+      currency = excluded.currency, address = excluded.address, phone = excluded.phone,
+      email = excluded.email, tax_number = excluded.tax_number, footer = excluded.footer,
+      payment_terms = excluded.payment_terms, updated_at = excluded.updated_at
   `;
 }
 

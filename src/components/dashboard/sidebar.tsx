@@ -10,6 +10,7 @@ import {
   Send,
   CalendarClock,
   Receipt,
+  Files,
   Settings,
   CreditCard,
   LifeBuoy,
@@ -29,6 +30,7 @@ const nav = [
   { href: "/dashboard/conversations", label: "Conversations", icon: MessagesSquare },
   { href: "/dashboard/appointments", label: "Appointments", icon: CalendarClock },
   { href: "/dashboard/invoices", label: "Invoices", icon: Receipt },
+  { href: "/dashboard/documents", label: "Documents", icon: Files },
   { href: "/dashboard/knowledge", label: "Knowledge Base", icon: BookOpen },
   { href: "/dashboard/sms", label: "SMS Automation", icon: Send },
 ];
