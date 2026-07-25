@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import { AuthForm } from "@/components/auth/auth-form";
 
 export const metadata: Metadata = { title: "Create account" };
+// Auth forms contain Server Action identifiers that must match the active
+// deployment. Rendering per request prevents a stale prerender from submitting
+// an action ID belonging to an older Vercel build.
+export const dynamic = "force-dynamic";
 
 export default function SignupPage() {
   return (

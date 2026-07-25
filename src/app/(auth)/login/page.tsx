@@ -3,6 +3,7 @@ import { AuthForm } from "@/components/auth/auth-form";
 import { isDbEnabled } from "@/lib/db";
 
 export const metadata: Metadata = { title: "Sign in" };
+export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
   return (
