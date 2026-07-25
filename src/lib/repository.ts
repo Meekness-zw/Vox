@@ -907,4 +907,107 @@ export async function getWorkspaceName(workspaceId = "ws_demo"): Promise<string>
   return rows.length ? (rows[0].name as string) : "Your Business";
 }
 
+export async function createTeamInvitation(opts: {
+  workspaceId: string; email: string; role: string; tokenHash: string; invitedBy: string;
+}) {
+  if (!sql) throw new Error("DATABASE_URL is not set");
+  const id = "inv_" + crypto.randomUUID();
+  await sql`
+    insert into team_invitations
+      (id, workspace_id, email, role, token_hash, invited_by, expires_at)
+    values (${id}, ${opts.workspaceId}, ${opts.email.toLowerCase()}, ${opts.role},
+      ${opts.tokenHash}, ${opts.invitedBy}, now() + interval '7 days')
+  `;
+  return id;
+}
+
+export async function getTeamInvitation(tokenHash: string) {
+  if (!sql) return null;
+  const rows = await sql`
+    select * from team_invitations
+    where token_hash=${tokenHash} and accepted_at is null and expires_at > now() limit 1
+  `;
+  return rows[0] ?? null;
+}
+
+export async function acceptTeamInvitation(opts: {
+  tokenHash: string; name: string; passwordHash: string;
+}) {
+  if (!sql) throw new Error("DATABASE_URL is not set");
+  const invite = await getTeamInvitation(opts.tokenHash);
+  if (!invite) throw new Error("This invitation is invalid or expired.");
+  const id = "u_" + crypto.randomUUID();
+  await sql.begin(async (tx) => {
+    await tx`
+      insert into users (id, workspace_id, email, password_hash, name, role)
+      values (${id}, ${invite.workspace_id}, ${invite.email}, ${opts.passwordHash},
+        ${opts.name}, ${invite.role})
+    `;
+    await tx`update team_invitations set accepted_at=now() where id=${invite.id}`;
+  });
+  return findUserByEmail(String(invite.email));
+}
+
+export async function listTeamInvitations(workspaceId: string) {
+  if (!sql) return [];
+  return sql`
+    select id,email,role,expires_at,accepted_at,created_at from team_invitations
+    where workspace_id=${workspaceId} order by created_at desc limit 20
+  `;
+}
+
+export async function getOrCreateWidgetConfig(workspaceId: string, agentId: string) {
+  if (!sql) return null;
+  await sql`
+    insert into widget_configs (workspace_id, public_token, agent_id)
+    values (${workspaceId}, ${"wgt_" + crypto.randomUUID()}, ${agentId})
+    on conflict (workspace_id) do nothing
+  `;
+  const rows = await sql`select * from widget_configs where workspace_id=${workspaceId} limit 1`;
+  return rows[0] ?? null;
+}
+
+export async function getWidgetByToken(token: string) {
+  if (!sql) return null;
+  const rows = await sql`
+    select * from widget_configs where public_token=${token} and enabled=true limit 1
+  `;
+  return rows[0] ?? null;
+}
+
+export async function saveCrmConnection(opts: {
+  workspaceId: string; name: string; webhookUrl: string; secretEncrypted?: string;
+}) {
+  if (!sql) throw new Error("DATABASE_URL is not set");
+  await sql`
+    insert into crm_connections (workspace_id,name,webhook_url,secret_encrypted)
+    values (${opts.workspaceId},${opts.name},${opts.webhookUrl},${opts.secretEncrypted ?? null})
+    on conflict (workspace_id) do update set name=excluded.name,
+      webhook_url=excluded.webhook_url, secret_encrypted=excluded.secret_encrypted,
+      enabled=true, updated_at=now()
+  `;
+}
+
+export async function getCrmConnection(workspaceId: string) {
+  if (!sql) return null;
+  const rows = await sql`select * from crm_connections where workspace_id=${workspaceId} limit 1`;
+  return rows[0] ?? null;
+}
+
+export async function addAuditEvent(workspaceId: string, actorEmail: string, action: string, details = {}) {
+  if (!sql) return;
+  await sql`
+    insert into audit_events (id,workspace_id,actor_email,action,details)
+    values (${"aud_" + crypto.randomUUID()},${workspaceId},${actorEmail},${action},${sql.json(details)})
+  `;
+}
+
+export async function listAuditEvents(workspaceId: string) {
+  if (!sql) return [];
+  return sql`
+    select * from audit_events where workspace_id=${workspaceId}
+    order by created_at desc limit 25
+  `;
+}
+
 export { isDbEnabled };

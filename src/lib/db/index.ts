@@ -261,6 +261,51 @@ create table if not exists company_profiles (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists team_invitations (
+  id text primary key,
+  workspace_id text not null,
+  email text not null,
+  role text not null default 'Agent',
+  token_hash text unique not null,
+  invited_by text not null,
+  expires_at timestamptz not null,
+  accepted_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists team_invitations_ws_idx on team_invitations (workspace_id, created_at desc);
+
+create table if not exists widget_configs (
+  workspace_id text primary key,
+  public_token text unique not null,
+  agent_id text not null,
+  title text not null default 'Chat with us',
+  welcome_message text not null default 'Hi! How can I help?',
+  primary_color text not null default '#6D5DFB',
+  enabled boolean not null default true,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists crm_connections (
+  workspace_id text primary key,
+  name text not null default 'CRM webhook',
+  webhook_url text not null,
+  secret_encrypted text,
+  enabled boolean not null default true,
+  last_synced_at timestamptz,
+  last_error text,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists audit_events (
+  id text primary key,
+  workspace_id text not null,
+  actor_email text not null,
+  action text not null,
+  details jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists audit_events_ws_idx on audit_events (workspace_id, created_at desc);
+
 -- Supabase exposes tables in the public schema through its Data API. Vox uses
 -- a trusted server-side PostgreSQL connection and its own workspace checks, so
 -- RLS is enabled without public policies: anon/authenticated Data API callers
@@ -279,6 +324,10 @@ alter table document_templates enable row level security;
 alter table business_documents enable row level security;
 alter table bot_requests enable row level security;
 alter table company_profiles enable row level security;
+alter table team_invitations enable row level security;
+alter table widget_configs enable row level security;
+alter table crm_connections enable row level security;
+alter table audit_events enable row level security;
 `;
 
 export async function initSchema() {

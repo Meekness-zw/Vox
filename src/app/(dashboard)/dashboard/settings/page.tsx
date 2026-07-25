@@ -1,12 +1,14 @@
-import { Check, ScrollText } from "lucide-react";
+import { Check, Code2, ScrollText } from "lucide-react";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { getSession } from "@/lib/auth/session-cookies";
-import { getCalendarConnection, listWorkspaceUsers } from "@/lib/repository";
+import { getCalendarConnection, getCrmConnection, getOrCreateWidgetConfig, listAgents, listAuditEvents, listTeamInvitations, listWorkspaceUsers } from "@/lib/repository";
 import { hasCalendarCredentials } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { connectCrm, createInvitation } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -21,10 +23,20 @@ const staticIntegrations = [
 
 const roleVariant = { Owner: "default", Admin: "success", Agent: "muted" } as const;
 
-export default async function SettingsPage() {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ invite?: string }> }) {
   const session = await getSession();
   const workspaceId = session?.workspaceId ?? "ws_demo";
   const team = await listWorkspaceUsers(workspaceId);
+  const invitations = await listTeamInvitations(workspaceId);
+  const agents = await listAgents(workspaceId);
+  const widgetAgent = agents.find((a) => a.type === "chat" && a.status === "active") ?? agents[0];
+  const widget = widgetAgent ? await getOrCreateWidgetConfig(workspaceId, widgetAgent.id) : null;
+  const crm = await getCrmConnection(workspaceId);
+  const audit = await listAuditEvents(workspaceId);
+  const { invite } = await searchParams;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const inviteUrl = invite ? `${appUrl}/invite/${invite}` : "";
+  const widgetCode = widget ? `<script async src="${appUrl}/api/widget/${widget.public_token}/script"></script>` : "";
   const calendarConnected = hasCalendarCredentials()
     ? Boolean(await getCalendarConnection(workspaceId))
     : false;
@@ -44,9 +56,11 @@ export default async function SettingsPage() {
                 Roles & permissions for your workspace
               </p>
             </div>
-            <Button size="sm" disabled title="Team invitations are not enabled yet">
-              Invite member
-            </Button>
+            <form action={createInvitation} className="flex flex-wrap gap-2">
+              <Input name="email" type="email" placeholder="teammate@company.com" className="h-8 w-52" required />
+              <select name="role" className="h-8 rounded-md border bg-background px-2 text-sm"><option>Agent</option><option>Admin</option></select>
+              <Button size="sm">Create invite link</Button>
+            </form>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
             {team.map((m) => (
@@ -63,7 +77,29 @@ export default async function SettingsPage() {
                 </Badge>
               </div>
             ))}
+            {invitations.filter((i) => !i.accepted_at).map((i) => <div key={String(i.id)} className="flex items-center justify-between px-5 py-3 text-sm">
+              <span>{String(i.email)} · pending {String(i.role)}</span><Badge variant="muted">Expires {new Date(i.expires_at as Date).toLocaleDateString()}</Badge>
+            </div>)}
           </CardContent>
+        </Card>
+        {inviteUrl && <Card><CardHeader><CardTitle>Invitation link created</CardTitle></CardHeader><CardContent>
+          <p className="mb-2 text-sm text-muted-foreground">Copy and send this link directly to your teammate. It expires in seven days.</p>
+          <Input readOnly value={inviteUrl} />
+        </CardContent></Card>}
+
+        <Card><CardHeader><CardTitle className="flex items-center gap-2"><Code2 className="size-4 text-primary" />Website chat widget</CardTitle>
+          <p className="text-sm text-muted-foreground">Paste this before the closing body tag on the client website.</p></CardHeader>
+          <CardContent>{widget ? <textarea readOnly value={widgetCode} className="h-24 w-full rounded-lg border bg-muted p-3 font-mono text-xs" /> : <p className="text-sm text-muted-foreground">Create an active agent before enabling the widget.</p>}</CardContent>
+        </Card>
+
+        <Card><CardHeader><CardTitle>CRM webhook</CardTitle>
+          <p className="text-sm text-muted-foreground">Send captured website leads to any HTTPS management system. The optional secret is sent as a Bearer token.</p></CardHeader>
+          <CardContent><form action={connectCrm} className="grid gap-3 sm:grid-cols-3">
+            <Input name="name" placeholder="CRM name" defaultValue={crm ? String(crm.name) : "Company CRM"} required />
+            <Input name="webhookUrl" type="url" placeholder="https://crm.example.com/webhooks/vox" defaultValue={crm ? String(crm.webhook_url) : ""} required />
+            <Input name="secret" type="password" placeholder={crm ? "Leave blank to replace with none" : "Optional API secret"} />
+            <Button className="sm:col-span-3 sm:w-fit">{crm ? "Update CRM connection" : "Connect CRM"}</Button>
+          </form></CardContent>
         </Card>
 
         {/* Integrations */}
@@ -153,10 +189,7 @@ export default async function SettingsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
-            <div className="px-5 py-6 text-sm text-muted-foreground">
-              No recorded workspace events yet. Audit persistence will be enabled
-              before team invitations are released.
-            </div>
+            {audit.length ? audit.map((e) => <div key={String(e.id)} className="flex justify-between px-5 py-3 text-sm"><span>{String(e.action)} · {String(e.actor_email)}</span><span className="text-muted-foreground">{new Date(e.created_at as Date).toLocaleString()}</span></div>) : <div className="px-5 py-6 text-sm text-muted-foreground">No recorded workspace events yet.</div>}
           </CardContent>
         </Card>
       </div>
