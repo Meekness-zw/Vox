@@ -130,6 +130,18 @@ function textArg(args: Record<string, unknown>, key: string, required = false) {
   return value || undefined;
 }
 
+function formatSlotLabel(iso: string, timezone: string) {
+  return new Date(iso).toLocaleString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: timezone,
+    timeZoneName: "short",
+  });
+}
+
 function lineItemsArg(args: Record<string, unknown>) {
   if (!Array.isArray(args.lineItems) || !args.lineItems.length) {
     throw new Error("At least one line item is required");
@@ -162,7 +174,13 @@ async function executePythonAction(action: PythonBotAction, ctx: ToolContext) {
         date,
         Math.max(10, Number(args.serviceMinutes ?? 30))
       );
-      return { timezone: result.timezone, slots: result.slots.slice(0, 8) };
+      return {
+        timezone: result.timezone,
+        slots: result.slots.slice(0, 8).map((startsAt) => ({
+          startsAt,
+          localTime: formatSlotLabel(startsAt, result.timezone),
+        })),
+      };
     }
     if (action.name === "book_appointment") {
       const appointment = await bookAppointment({
