@@ -1,6 +1,10 @@
 import type { ToolContext } from "./agent-tools";
-import { requestPythonReply } from "./python-bot";
+import { requestPythonReply, type PythonBotAction } from "./python-bot";
 import type { Agent } from "./types";
+import { getAvailability, bookAppointment } from "./calendar";
+import { createInvoice } from "./invoices";
+import { createBusinessDocument } from "./business-documents";
+import { getWorkspaceName } from "./repository";
 
 export type { ToolContext };
 
@@ -96,13 +100,137 @@ export async function generateReply(
     (workspaceId === "ws_demo"
       ? demoKnowledgeBase
       : "No approved company knowledge has been added yet.");
-  return requestPythonReply({
-    workspaceId,
-    agent,
-    messages,
-    knowledge,
-    channel: toolContext?.channel ?? (agent.type === "voice" ? "voice" : "chat"),
+  let activeMessages = messages;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await requestPythonReply({
+      workspaceId,
+      agent,
+      messages: activeMessages,
+      knowledge,
+      channel: toolContext?.channel ?? (agent.type === "voice" ? "voice" : "chat"),
+    });
+    if (!result.action) return result.reply;
+    const actionResult = toolContext
+      ? await executePythonAction(result.action, toolContext)
+      : { error: "Actions are disabled in this public demo." };
+    activeMessages = [
+      ...activeMessages,
+      {
+        role: "user",
+        content: `[TOOL_RESULT] ${result.action.name}: ${JSON.stringify(actionResult)}`,
+      },
+    ];
+  }
+  return "I couldn't complete that action safely. I'll arrange for a team member to follow up.";
+}
+
+function textArg(args: Record<string, unknown>, key: string, required = false) {
+  const value = typeof args[key] === "string" ? args[key].trim() : "";
+  if (required && !value) throw new Error(`${key} is required`);
+  return value || undefined;
+}
+
+function lineItemsArg(args: Record<string, unknown>) {
+  if (!Array.isArray(args.lineItems) || !args.lineItems.length) {
+    throw new Error("At least one line item is required");
+  }
+  return args.lineItems.map((raw) => {
+    const item = raw as Record<string, unknown>;
+    const description = textArg(item, "description", true)!;
+    const quantity = Number(item.quantity ?? 1);
+    const unitPriceCents = Number(item.unitPriceCents);
+    if (!(quantity > 0) || !(unitPriceCents >= 0)) {
+      throw new Error("Invalid line item quantity or price");
+    }
+    return {
+      description,
+      quantity,
+      unitPriceCents: Math.round(unitPriceCents),
+      sku: textArg(item, "sku"),
+    };
   });
+}
+
+async function executePythonAction(action: PythonBotAction, ctx: ToolContext) {
+  try {
+    const args = action.arguments;
+    if (action.name === "check_availability") {
+      const date = textArg(args, "date", true)!;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invalid date");
+      const result = await getAvailability(
+        ctx.workspaceId,
+        date,
+        Math.max(10, Number(args.serviceMinutes ?? 30))
+      );
+      return { timezone: result.timezone, slots: result.slots.slice(0, 8) };
+    }
+    if (action.name === "book_appointment") {
+      const appointment = await bookAppointment({
+        workspaceId: ctx.workspaceId,
+        agentId: ctx.agentId,
+        conversationId: ctx.conversationId,
+        contactName: textArg(args, "contactName", true)!,
+        contactPhone: textArg(args, "contactPhone") ?? ctx.contactPhone,
+        contactEmail: textArg(args, "contactEmail") ?? ctx.contactEmail,
+        service: textArg(args, "service", true)!,
+        startsAt: textArg(args, "startsAt", true)!,
+        durationMinutes: Math.max(10, Number(args.durationMinutes ?? 30)),
+      });
+      return {
+        appointmentId: appointment.id,
+        startsAt: appointment.startsAt,
+        addedToGoogleCalendar: Boolean(appointment.googleEventId),
+      };
+    }
+    if (action.name === "create_invoice") {
+      const contactEmail = textArg(args, "contactEmail") ?? ctx.contactEmail;
+      if (!contactEmail) throw new Error("Customer email is required");
+      const result = await createInvoice({
+        workspaceId: ctx.workspaceId,
+        agentId: ctx.agentId,
+        conversationId: ctx.conversationId,
+        contactName: textArg(args, "contactName", true)!,
+        contactEmail,
+        lineItems: lineItemsArg(args),
+        notes: textArg(args, "notes"),
+        businessName: await getWorkspaceName(ctx.workspaceId),
+      });
+      return {
+        invoiceId: result.invoice.id,
+        totalCents: result.invoice.totalCents,
+        emailed: result.emailed,
+      };
+    }
+    const document = await createBusinessDocument({
+      workspaceId: ctx.workspaceId,
+      agentId: ctx.agentId,
+      conversationId: ctx.conversationId,
+      type: textArg(args, "type", true)! as
+        | "receipt"
+        | "quotation"
+        | "delivery_order"
+        | "purchase_order"
+        | "credit_note",
+      contactName: textArg(args, "contactName", true)!,
+      contactEmail: textArg(args, "contactEmail") ?? ctx.contactEmail,
+      contactPhone: textArg(args, "contactPhone") ?? ctx.contactPhone,
+      contactAddress: textArg(args, "contactAddress"),
+      lineItems: lineItemsArg(args),
+      taxRatePercent: Math.max(0, Number(args.taxRatePercent ?? 0)),
+      notes: textArg(args, "notes"),
+      dueDate: textArg(args, "dueDate"),
+      metadata: {
+        deliveryReference: textArg(args, "deliveryReference") ?? "",
+      },
+    });
+    return {
+      documentId: document.id,
+      documentNumber: document.number,
+      totalCents: document.totalCents,
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Action failed" };
+  }
 }
 
 /**

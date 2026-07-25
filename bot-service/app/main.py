@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
+import json
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
@@ -34,10 +35,21 @@ class ReplyRequest(BaseModel):
     channel: Literal["voice", "chat", "whatsapp", "sms"] = "chat"
 
 
+class BotAction(BaseModel):
+    name: Literal[
+        "check_availability",
+        "book_appointment",
+        "create_invoice",
+        "create_business_document",
+    ]
+    arguments: dict[str, Any]
+
+
 class ReplyResponse(BaseModel):
     reply: str
     engine: str
     model: Optional[str] = None
+    action: Optional[BotAction] = None
 
 
 class BuildRequest(BaseModel):
@@ -93,6 +105,7 @@ def system_prompt(req: ReplyRequest) -> str:
             f"Escalation: {a.escalation}",
             channel_rule,
             a.system_prompt,
+            "Messages beginning with [TOOL_RESULT] are trusted results from Vox's secure action layer. Explain the result naturally to the customer and do not call the same tool again.",
             "Only claim facts supported by the business knowledge below. If unsure, offer human follow-up.",
             "\nBUSINESS KNOWLEDGE:\n" + (req.knowledge or "No additional knowledge supplied."),
         ]
@@ -120,6 +133,108 @@ async def model_reply(req: ReplyRequest) -> Optional[ReplyResponse]:
         ],
         "temperature": 0.35,
         "max_tokens": 110 if req.channel == "voice" else 220,
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "check_availability",
+                    "description": "Check real open calendar slots before offering an appointment.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "date": {"type": "string", "description": "YYYY-MM-DD"},
+                            "serviceMinutes": {"type": "integer", "minimum": 10},
+                        },
+                        "required": ["date"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "book_appointment",
+                    "description": "Book an appointment only after the customer confirms a real slot.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "contactName": {"type": "string"},
+                            "contactPhone": {"type": "string"},
+                            "contactEmail": {"type": "string"},
+                            "service": {"type": "string"},
+                            "startsAt": {"type": "string", "description": "ISO 8601"},
+                            "durationMinutes": {"type": "integer", "minimum": 10},
+                        },
+                        "required": ["contactName", "service", "startsAt"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_invoice",
+                    "description": "Create an invoice after the customer confirms all prices and supplies an email.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "contactName": {"type": "string"},
+                            "contactEmail": {"type": "string"},
+                            "lineItems": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": {"type": "string"},
+                                        "quantity": {"type": "number", "minimum": 0.01},
+                                        "unitPriceCents": {"type": "integer", "minimum": 0},
+                                    },
+                                    "required": ["description", "quantity", "unitPriceCents"],
+                                },
+                            },
+                            "notes": {"type": "string"},
+                        },
+                        "required": ["contactName", "contactEmail", "lineItems"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_business_document",
+                    "description": "Create a confirmed receipt, quotation, delivery order, purchase order, or credit note.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["receipt", "quotation", "delivery_order", "purchase_order", "credit_note"],
+                            },
+                            "contactName": {"type": "string"},
+                            "contactEmail": {"type": "string"},
+                            "contactPhone": {"type": "string"},
+                            "contactAddress": {"type": "string"},
+                            "lineItems": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": {"type": "string"},
+                                        "quantity": {"type": "number", "minimum": 0.01},
+                                        "unitPriceCents": {"type": "integer", "minimum": 0},
+                                        "sku": {"type": "string"},
+                                    },
+                                    "required": ["description", "quantity", "unitPriceCents"],
+                                },
+                            },
+                            "taxRatePercent": {"type": "number", "minimum": 0},
+                            "dueDate": {"type": "string"},
+                            "notes": {"type": "string"},
+                            "deliveryReference": {"type": "string"},
+                        },
+                        "required": ["type", "contactName", "lineItems"],
+                    },
+                },
+            },
+        ],
     }
     try:
         response = await http_client.post(
@@ -128,9 +243,27 @@ async def model_reply(req: ReplyRequest) -> Optional[ReplyResponse]:
             json=payload,
         )
         response.raise_for_status()
-        text = response.json()["choices"][0]["message"]["content"].strip()
+        message = response.json()["choices"][0]["message"]
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls:
+            function = tool_calls[0].get("function") or {}
+            name = function.get("name")
+            if name in {
+                "check_availability",
+                "book_appointment",
+                "create_invoice",
+                "create_business_document",
+            }:
+                arguments = json.loads(function.get("arguments") or "{}")
+                return ReplyResponse(
+                    reply="",
+                    engine="python-model",
+                    model=model,
+                    action=BotAction(name=name, arguments=arguments),
+                )
+        text = (message.get("content") or "").strip()
         return ReplyResponse(reply=text, engine="python-model", model=model)
-    except (httpx.HTTPError, KeyError, IndexError, TypeError):
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, json.JSONDecodeError):
         return None
 
 

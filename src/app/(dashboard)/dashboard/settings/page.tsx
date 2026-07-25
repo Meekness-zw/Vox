@@ -1,20 +1,14 @@
-import { Check, Plus, ScrollText } from "lucide-react";
+import { Check, ScrollText } from "lucide-react";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { getSession } from "@/lib/auth/session-cookies";
-import { getCalendarConnection } from "@/lib/repository";
+import { getCalendarConnection, listWorkspaceUsers } from "@/lib/repository";
 import { hasCalendarCredentials } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
-
-const team = [
-  { name: "Bright Smile (You)", email: "owner@brightsmile.com", role: "Owner" },
-  { name: "Jordan Lee", email: "jordan@brightsmile.com", role: "Admin" },
-  { name: "Priya Patel", email: "priya@brightsmile.com", role: "Agent" },
-];
 
 const staticIntegrations = [
   { name: "Microsoft Outlook", category: "Calendar", connected: false },
@@ -25,18 +19,12 @@ const staticIntegrations = [
   { name: "Telnyx", category: "Telephony", connected: false },
 ];
 
-const auditLog = [
-  { who: "Jordan Lee", action: "Updated 'Front Desk Receptionist' system prompt", when: "2h ago" },
-  { who: "System", action: "Auto-synced knowledge source brightsmile.com", when: "5h ago" },
-  { who: "Priya Patel", action: "Paused 'After-Hours Voice Agent'", when: "Yesterday" },
-  { who: "Owner", action: "Connected HubSpot integration", when: "3 days ago" },
-];
-
 const roleVariant = { Owner: "default", Admin: "success", Agent: "muted" } as const;
 
 export default async function SettingsPage() {
   const session = await getSession();
   const workspaceId = session?.workspaceId ?? "ws_demo";
+  const team = await listWorkspaceUsers(workspaceId);
   const calendarConnected = hasCalendarCredentials()
     ? Boolean(await getCalendarConnection(workspaceId))
     : false;
@@ -56,8 +44,8 @@ export default async function SettingsPage() {
                 Roles & permissions for your workspace
               </p>
             </div>
-            <Button size="sm">
-              <Plus className="size-4" /> Invite member
+            <Button size="sm" disabled title="Team invitations are not enabled yet">
+              Invite member
             </Button>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
@@ -147,15 +135,10 @@ export default async function SettingsPage() {
                       {i.category}
                     </div>
                   </div>
-                  {i.connected ? (
-                    <Badge variant="success">
-                      <Check className="size-3" /> Connected
-                    </Badge>
-                  ) : (
-                    <Button variant="outline" size="sm">
-                      Connect
-                    </Button>
-                  )}
+                  <Badge variant={i.connected ? "success" : "muted"}>
+                    {i.connected && <Check className="size-3" />}
+                    {i.connected ? "Connected" : "Not connected"}
+                  </Badge>
                 </div>
               ))}
             </div>
@@ -170,15 +153,10 @@ export default async function SettingsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
-            {auditLog.map((a, i) => (
-              <div key={i} className="flex items-center justify-between px-5 py-3 text-sm">
-                <span>
-                  <span className="font-medium">{a.who}</span>{" "}
-                  <span className="text-muted-foreground">{a.action}</span>
-                </span>
-                <span className="text-xs text-muted-foreground">{a.when}</span>
-              </div>
-            ))}
+            <div className="px-5 py-6 text-sm text-muted-foreground">
+              No recorded workspace events yet. Audit persistence will be enabled
+              before team invitations are released.
+            </div>
           </CardContent>
         </Card>
       </div>

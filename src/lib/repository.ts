@@ -27,7 +27,34 @@ const demoBotRequests: BotRequest[] = [];
 const demoBusinessDocuments: BusinessDocument[] = [];
 const demoDocumentTemplates = new Map<string, DocumentTemplate>();
 
+export type WorkspaceUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+};
+
 /* ---- row mappers ---------------------------------------------------------- */
+
+export async function listWorkspaceUsers(
+  workspaceId = "ws_demo"
+): Promise<WorkspaceUser[]> {
+  if (!sql) {
+    return [{ id: "u_demo", name: "Demo User", email: "demo@vox.ai", role: "Owner" }];
+  }
+  const rows = await sql`
+    select id, name, email, role
+    from users
+    where workspace_id = ${workspaceId}
+    order by created_at
+  `;
+  return rows.map((row) => ({
+    id: row.id as string,
+    name: row.name as string,
+    email: row.email as string,
+    role: row.role as string,
+  }));
+}
 
 function rowToAgent(r: Record<string, unknown>): Agent {
   return {

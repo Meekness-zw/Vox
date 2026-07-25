@@ -1,6 +1,15 @@
 import type { Agent } from "./types";
 
 export type BotMessage = { role: "user" | "assistant"; content: string };
+export type PythonBotAction = {
+  name:
+    | "check_availability"
+    | "book_appointment"
+    | "create_invoice"
+    | "create_business_document";
+  arguments: Record<string, unknown>;
+};
+export type PythonBotReply = { reply: string; action?: PythonBotAction };
 
 const baseUrl = () =>
   (process.env.VOX_BOT_SERVICE_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -19,7 +28,7 @@ export async function requestPythonReply(input: {
   messages: BotMessage[];
   knowledge?: string;
   channel?: "voice" | "chat" | "whatsapp" | "sms";
-}): Promise<string> {
+}): Promise<PythonBotReply> {
   let response: Response;
   try {
     response = await fetch(`${baseUrl()}/v1/reply`, {
@@ -44,9 +53,14 @@ export async function requestPythonReply(input: {
   if (!response.ok) {
     throw new Error(`Python bot engine returned ${response.status}: ${await response.text()}`);
   }
-  const result = (await response.json()) as { reply?: string };
-  if (!result.reply?.trim()) throw new Error("Python bot engine returned an empty reply.");
-  return result.reply.trim();
+  const result = (await response.json()) as {
+    reply?: string;
+    action?: PythonBotAction;
+  };
+  if (!result.reply?.trim() && !result.action) {
+    throw new Error("Python bot engine returned neither a reply nor an action.");
+  }
+  return { reply: result.reply?.trim() ?? "", action: result.action };
 }
 
 export type BuildBotInput = {

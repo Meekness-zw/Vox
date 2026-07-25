@@ -11,7 +11,10 @@ import {
 import { decryptSecret, encryptSecret, hasEncryptionKey } from "@/lib/token-crypto";
 import type { Appointment } from "@/lib/types";
 
-const SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
+const SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.freebusy",
+];
 
 export function hasCalendarCredentials() {
   return Boolean(
@@ -100,6 +103,45 @@ const DEFAULT_TIMEZONE = process.env.VOX_DEFAULT_TIMEZONE?.trim() || "Africa/Har
 
 export type AvailabilityResult = { slots: string[]; timezone: string };
 
+function zonedHourToUtc(date: string, hour: number, timezone: string): Date {
+  let timestamp = Date.UTC(
+    Number(date.slice(0, 4)),
+    Number(date.slice(5, 7)) - 1,
+    Number(date.slice(8, 10)),
+    hour
+  );
+  // Convert the requested wall-clock time into UTC. A second pass handles
+  // daylight-saving boundaries for client workspaces outside Zimbabwe.
+  for (let pass = 0; pass < 2; pass++) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(timestamp));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const representedAsUtc = Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day),
+      Number(values.hour),
+      Number(values.minute),
+      Number(values.second)
+    );
+    timestamp -= representedAsUtc - Date.UTC(
+      Number(date.slice(0, 4)),
+      Number(date.slice(5, 7)) - 1,
+      Number(date.slice(8, 10)),
+      hour
+    );
+  }
+  return new Date(timestamp);
+}
+
 /**
  * Open slots for `date` (YYYY-MM-DD). Falls back to a naive 9-5 business-hours
  * window minus already-booked appointments when no Google Calendar is
@@ -114,14 +156,15 @@ export async function getAvailability(
   const conn = await getClientForWorkspace(workspaceId);
   const timezone = conn?.timezone ?? DEFAULT_TIMEZONE;
 
-  const dayStart = new Date(`${date}T${String(BUSINESS_START_HOUR).padStart(2, "0")}:00:00Z`);
-  const dayEnd = new Date(`${date}T${String(BUSINESS_END_HOUR).padStart(2, "0")}:00:00Z`);
+  const dayStart = zonedHourToUtc(date, BUSINESS_START_HOUR, timezone);
+  const dayEnd = zonedHourToUtc(date, BUSINESS_END_HOUR, timezone);
 
   const busy: { start: Date; end: Date }[] = [];
 
   if (conn) {
-    const fb = await conn.client
-      .request<{ calendars: Record<string, { busy: { start: string; end: string }[] }> }>({
+    const fb = await conn.client.request<{
+      calendars: Record<string, { busy: { start: string; end: string }[] }>;
+    }>({
         url: "https://www.googleapis.com/calendar/v3/freeBusy",
         method: "POST",
         data: {
@@ -129,9 +172,8 @@ export async function getAvailability(
           timeMax: dayEnd.toISOString(),
           items: [{ id: conn.calendarId }],
         },
-      })
-      .catch(() => null);
-    const calBusy = fb?.data.calendars?.[conn.calendarId]?.busy ?? [];
+      });
+    const calBusy = fb.data.calendars?.[conn.calendarId]?.busy ?? [];
     for (const b of calBusy) busy.push({ start: new Date(b.start), end: new Date(b.end) });
   } else {
     const existing = await listAppointmentsInRange(

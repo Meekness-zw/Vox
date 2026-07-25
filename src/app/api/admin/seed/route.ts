@@ -4,6 +4,8 @@ import { agents, conversations } from "@/lib/data";
 import { hashPassword } from "@/lib/auth/password";
 import { ingestSource } from "@/lib/rag";
 import { demoKnowledgeBase } from "@/lib/agent-runtime";
+import { getSession } from "@/lib/auth/session-cookies";
+import { isVoxAdmin } from "@/lib/admin";
 
 /**
  * One-shot initializer: creates the schema and seeds it with the demo data.
@@ -14,6 +16,10 @@ import { demoKnowledgeBase } from "@/lib/agent-runtime";
  * route behind auth or remove it after the first run.
  */
 export async function POST() {
+  const session = await getSession();
+  if (!session || !isVoxAdmin(session.email)) {
+    return Response.json({ error: "Vox administrator access required." }, { status: 403 });
+  }
   if (!isDbEnabled) {
     return Response.json(
       {
