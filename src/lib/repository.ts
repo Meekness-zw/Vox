@@ -203,7 +203,7 @@ export async function upsertCalendarConnection(opts: {
       (workspace_id, calendar_id, refresh_token, access_token, access_token_expires_at, timezone)
     values (${opts.workspaceId}, ${opts.calendarId}, ${opts.refreshTokenEncrypted},
       ${opts.accessToken ?? null}, ${opts.accessTokenExpiresAt ?? null},
-      ${opts.timezone ?? "America/Los_Angeles"})
+      ${opts.timezone ?? process.env.VOX_DEFAULT_TIMEZONE?.trim() ?? "Africa/Harare"})
     on conflict (workspace_id) do update set
       calendar_id = excluded.calendar_id, refresh_token = excluded.refresh_token,
       access_token = excluded.access_token,

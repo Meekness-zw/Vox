@@ -136,7 +136,7 @@ create table if not exists calendar_connections (
   refresh_token text not null,
   access_token text,
   access_token_expires_at timestamptz,
-  timezone text not null default 'America/Los_Angeles',
+  timezone text not null default 'Africa/Harare',
   connected_at timestamptz not null default now()
 );
 

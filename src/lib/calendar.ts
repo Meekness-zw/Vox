@@ -96,7 +96,7 @@ async function getClientForWorkspace(workspaceId: string) {
 
 const BUSINESS_START_HOUR = 9;
 const BUSINESS_END_HOUR = 17;
-const DEFAULT_TIMEZONE = "America/Los_Angeles";
+const DEFAULT_TIMEZONE = process.env.VOX_DEFAULT_TIMEZONE?.trim() || "Africa/Harare";
 
 export type AvailabilityResult = { slots: string[]; timezone: string };
 
