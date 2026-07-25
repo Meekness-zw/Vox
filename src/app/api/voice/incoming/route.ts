@@ -1,5 +1,6 @@
+import { createHmac } from "node:crypto";
 import { getAgentById, getRoutingForNumber } from "@/lib/repository";
-import { sayAndGather, startSession } from "@/lib/voice/twiml";
+import { connectMediaStream, sayAndGather, startSession } from "@/lib/voice/twiml";
 import { formDataToParams, isValidTwilioRequest, publicWebhookUrl } from "@/lib/twilio-signature";
 
 export const maxDuration = 30;
@@ -44,6 +45,19 @@ export async function POST(req: Request) {
   }
 
   await startSession(callSid, agent.id, from, workspaceId);
+
+  const streamUrl = process.env.VOX_MEDIA_STREAM_URL ??
+    "wss://vox-production-12ac.up.railway.app/v1/twilio-media";
+  const serviceToken = process.env.VOX_BOT_SERVICE_TOKEN;
+  if (serviceToken && streamUrl) {
+    const expires = String(Math.floor(Date.now() / 1000) + 300);
+    const payload = `${callSid}.${workspaceId}.${agent.id}.${expires}`;
+    const token = createHmac("sha256", serviceToken).update(payload).digest("hex");
+    return connectMediaStream(streamUrl, {
+      callSid, workspaceId, agentId: agent.id, caller: from,
+      greeting: agent.greeting.slice(0, 400), expires, token,
+    });
+  }
 
   const action = `/api/voice/respond?agentId=${encodeURIComponent(agent.id)}`;
   return sayAndGather(agent.greeting, action, agent.language);

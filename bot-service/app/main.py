@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import os
 import re
+import audioop
+import base64
+import hashlib
+import hmac
+import io
+import time
+import wave
 from typing import Any, Literal, Optional
 import json
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 
@@ -283,6 +290,138 @@ def offline_reply(req: ReplyRequest) -> str:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "vox-python-bot-engine"}
+
+
+def stream_token_valid(params: dict[str, str]) -> bool:
+    secret = os.getenv("VOX_BOT_SERVICE_TOKEN", "")
+    try:
+        expires = int(params.get("expires", "0"))
+    except ValueError:
+        return False
+    if not secret or expires < int(time.time()):
+        return False
+    payload = ".".join(
+        [params.get("callSid", ""), params.get("workspaceId", ""), params.get("agentId", ""), str(expires)]
+    )
+    expected = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, params.get("token", ""))
+
+
+async def transcribe_mulaw(audio: bytes) -> str:
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not key or not audio:
+        return ""
+    pcm = audioop.ulaw2lin(audio, 2)
+    wav = io.BytesIO()
+    with wave.open(wav, "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(8000)
+        output.writeframes(pcm)
+    response = await http_client.post(
+        "https://api.openai.com/v1/audio/transcriptions",
+        headers={"Authorization": f"Bearer {key}"},
+        files={"file": ("call.wav", wav.getvalue(), "audio/wav")},
+        data={
+            "model": os.getenv("VOX_STT_MODEL", "gpt-4o-mini-transcribe"),
+            "prompt": "The caller may speak English, Shona (chiShona), or naturally code-switch between them. Preserve names, phone numbers, and Shona spelling accurately.",
+        },
+    )
+    response.raise_for_status()
+    return (response.json().get("text") or "").strip()
+
+
+async def speak_to_twilio(websocket: WebSocket, stream_sid: str, text: str) -> None:
+    key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    voice_id = os.getenv("ELEVENLABS_MICHEAL_VOICE_ID", "").strip() or "YPtbPhafrxFTDAeaPP4w"
+    if not key or not text:
+        return
+    url = (
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+        "?output_format=ulaw_8000&optimize_streaming_latency=3"
+    )
+    async with http_client.stream(
+        "POST", url,
+        headers={"xi-api-key": key, "content-type": "application/json"},
+        json={
+            "text": text,
+            "model_id": os.getenv("ELEVENLABS_CALL_MODEL", "eleven_flash_v2_5"),
+            "voice_settings": {"stability": 0.42, "similarity_boost": 0.78, "speed": 1.08},
+        },
+    ) as response:
+        response.raise_for_status()
+        async for chunk in response.aiter_bytes(3200):
+            if chunk:
+                await websocket.send_json({
+                    "event": "media", "streamSid": stream_sid,
+                    "media": {"payload": base64.b64encode(chunk).decode()},
+                })
+
+
+async def streamed_bot_reply(params: dict[str, str], messages: list[dict[str, str]], started_at: str) -> str:
+    app_url = os.getenv("VOX_APP_URL", "https://vox-rust-six.vercel.app").rstrip("/")
+    response = await http_client.post(
+        f"{app_url}/api/voice/stream-reply",
+        headers={"Authorization": f"Bearer {os.getenv('VOX_BOT_SERVICE_TOKEN', '')}"},
+        json={
+            "workspaceId": params["workspaceId"], "agentId": params["agentId"],
+            "callSid": params["callSid"], "caller": params.get("caller", ""),
+            "startedAt": started_at, "messages": messages,
+        },
+    )
+    response.raise_for_status()
+    return (response.json().get("reply") or "").strip()
+
+
+@app.websocket("/v1/twilio-media")
+async def twilio_media(websocket: WebSocket) -> None:
+    await websocket.accept()
+    stream_sid = ""
+    params: dict[str, str] = {}
+    messages: list[dict[str, str]] = []
+    audio = bytearray()
+    speaking = False
+    silence_chunks = 0
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        while True:
+            event = await websocket.receive_json()
+            kind = event.get("event")
+            if kind == "start":
+                stream_sid = event["start"]["streamSid"]
+                params = {str(k): str(v) for k, v in event["start"].get("customParameters", {}).items()}
+                if not stream_token_valid(params):
+                    await websocket.close(code=1008)
+                    return
+                greeting = params.get("greeting", "Hello! How can I help you today?")
+                messages.append({"role": "assistant", "content": greeting})
+                await speak_to_twilio(websocket, stream_sid, greeting)
+            elif kind == "media" and params:
+                chunk = base64.b64decode(event["media"]["payload"])
+                rms = audioop.rms(audioop.ulaw2lin(chunk, 2), 2)
+                if rms > 260:
+                    speaking = True
+                    silence_chunks = 0
+                    audio.extend(chunk)
+                elif speaking:
+                    audio.extend(chunk)
+                    silence_chunks += 1
+                if speaking and (silence_chunks >= 35 or len(audio) >= 96000):
+                    utterance = bytes(audio)
+                    audio.clear()
+                    speaking = False
+                    silence_chunks = 0
+                    transcript = await transcribe_mulaw(utterance)
+                    if transcript:
+                        messages.append({"role": "user", "content": transcript})
+                        reply_text = await streamed_bot_reply(params, messages, started_at)
+                        if reply_text:
+                            messages.append({"role": "assistant", "content": reply_text})
+                            await speak_to_twilio(websocket, stream_sid, reply_text)
+            elif kind == "stop":
+                break
+    except (WebSocketDisconnect, httpx.HTTPError, KeyError, ValueError):
+        return
 
 
 @app.post("/v1/reply", response_model=ReplyResponse)

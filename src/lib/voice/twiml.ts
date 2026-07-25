@@ -56,6 +56,15 @@ export function sayAndHangup(text: string) {
   return twimlResponse(`<Say voice="${VOICE}">${escapeXml(text)}</Say><Hangup/>`);
 }
 
+export function connectMediaStream(url: string, parameters: Record<string, string>) {
+  const params = Object.entries(parameters)
+    .map(([name, value]) => `<Parameter name="${escapeXml(name)}" value="${escapeXml(value)}"/>`)
+    .join("");
+  return twimlResponse(
+    `<Connect><Stream url="${escapeXml(url)}">${params}</Stream></Connect>`
+  );
+}
+
 /** Reply to an inbound WhatsApp/SMS message synchronously (no REST call needed). */
 export function messageReply(text: string) {
   return twimlResponse(`<Message>${escapeXml(text)}</Message>`);
