@@ -65,6 +65,7 @@ export async function POST(req: Request) {
       ? {
           workspaceId,
           agentId: agent.id,
+          channel: "chat",
           conversationId: conversationId ? "cv_" + conversationId : undefined,
           contactEmail: session.email,
         }

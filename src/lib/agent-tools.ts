@@ -14,6 +14,7 @@ import { createBusinessDocument } from "@/lib/business-documents";
 export type ToolContext = {
   workspaceId: string;
   agentId: string;
+  channel?: "voice" | "chat" | "whatsapp" | "sms";
   conversationId?: string;
   contactPhone?: string;
   contactEmail?: string;

@@ -88,13 +88,20 @@ export async function generateReply(
    */
   toolContext?: ToolContext
 ): Promise<string> {
-  const knowledge = retrievedKnowledge?.trim() || demoKnowledgeBase;
+  const workspaceId = toolContext?.workspaceId ?? "ws_demo";
+  // Demo knowledge must never leak into a real client's bot simply because
+  // that workspace has not uploaded knowledge yet.
+  const knowledge =
+    retrievedKnowledge?.trim() ||
+    (workspaceId === "ws_demo"
+      ? demoKnowledgeBase
+      : "No approved company knowledge has been added yet.");
   return requestPythonReply({
-    workspaceId: toolContext?.workspaceId ?? "ws_demo",
+    workspaceId,
     agent,
     messages,
     knowledge,
-    channel: agent.type === "voice" ? "voice" : "chat",
+    channel: toolContext?.channel ?? (agent.type === "voice" ? "voice" : "chat"),
   });
 }
 

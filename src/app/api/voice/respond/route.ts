@@ -72,6 +72,7 @@ export async function POST(req: Request) {
   const reply = await generateReply(agent, session.messages, ctx?.text, {
     workspaceId: session.workspaceId,
     agentId: agent.id,
+    channel: "voice",
     conversationId: "cv_" + callSid,
     contactPhone: from,
   });

@@ -63,6 +63,7 @@ export async function POST(req: Request) {
   const reply = await generateReply(agent, history, ctx?.text, {
     workspaceId: route.workspaceId,
     agentId: agent.id,
+    channel: "whatsapp",
     conversationId: threadId,
     contactPhone: from,
   });
