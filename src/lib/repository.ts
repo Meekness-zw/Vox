@@ -142,6 +142,12 @@ export async function getConversationById(
 
 export type NumberRoute = { workspaceId: string; agentId: string };
 
+function normalizePhoneNumber(number: string) {
+  const trimmed = number.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  return trimmed.startsWith("+") ? `+${digits}` : digits;
+}
+
 /**
  * Resolve which workspace + agent should answer a call/message to `number` on
  * `channel`. In demo mode (no DB), every number routes to the demo workspace's
@@ -158,9 +164,11 @@ export async function getRoutingForNumber(
       mockAgents[0];
     return agent ? { workspaceId: "ws_demo", agentId: agent.id } : null;
   }
+  const normalized = normalizePhoneNumber(number);
   const rows = await sql`
     select workspace_id, agent_id from phone_numbers
-    where number = ${number} and channel = ${channel} limit 1
+    where regexp_replace(number, '[^0-9+]', '', 'g') = ${normalized}
+      and channel = ${channel} limit 1
   `;
   return rows.length
     ? { workspaceId: rows[0].workspace_id as string, agentId: rows[0].agent_id as string }
@@ -174,9 +182,10 @@ export async function upsertPhoneNumber(entry: {
   agentId: string;
 }, workspaceId = "ws_demo"): Promise<void> {
   if (!sql) return;
+  const normalized = normalizePhoneNumber(entry.number);
   await sql`
     insert into phone_numbers (id, workspace_id, number, channel, agent_id)
-    values (${entry.id}, ${workspaceId}, ${entry.number}, ${entry.channel}, ${entry.agentId})
+    values (${entry.id}, ${workspaceId}, ${normalized}, ${entry.channel}, ${entry.agentId})
     on conflict (number, channel) do update set
       agent_id = excluded.agent_id, workspace_id = excluded.workspace_id
   `;
