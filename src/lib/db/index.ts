@@ -317,7 +317,7 @@ create table if not exists widget_configs (
   agent_id text not null,
   title text not null default 'Chat with us',
   welcome_message text not null default 'Hi! How can I help?',
-  primary_color text not null default '#6D5DFB',
+  primary_color text not null default '#0F766E',
   enabled boolean not null default true,
   updated_at timestamptz not null default now()
 );

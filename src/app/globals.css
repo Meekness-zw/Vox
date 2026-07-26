@@ -15,13 +15,13 @@
 
   --border: #e7e7ee;
   --input: #e7e7ee;
-  --ring: #6d4aff;
+  --ring: #0f766e;
 
-  --primary: #6d4aff;
+  --primary: #0f766e;
   --primary-foreground: #ffffff;
 
-  --accent: #f0ecff;
-  --accent-foreground: #4b2fd6;
+  --accent: #ccfbf1;
+  --accent-foreground: #115e59;
 
   --success: #16a34a;
   --warning: #d97706;
@@ -42,13 +42,13 @@
 
   --border: #23232f;
   --input: #23232f;
-  --ring: #8b6dff;
+  --ring: #5eead4;
 
-  --primary: #8b6dff;
+  --primary: #5eead4;
   --primary-foreground: #0b0b13;
 
-  --accent: #1a1530;
-  --accent-foreground: #c9bdff;
+  --accent: #123b38;
+  --accent-foreground: #99f6e4;
 }
 
 @theme inline {
