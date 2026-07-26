@@ -1,7 +1,7 @@
 import { generateReply, type SimpleMessage } from "@/lib/agent-runtime";
 import { buildConversation } from "@/lib/conversation";
 import { retrieveContext } from "@/lib/rag";
-import { getAgentById, upsertConversation } from "@/lib/repository";
+import { addAuditEvent, getAgentById, getCompanyProfile, upsertConversation } from "@/lib/repository";
 
 export const maxDuration = 30;
 
@@ -18,6 +18,29 @@ export async function POST(req: Request) {
   const agent = await getAgentById(agentId, workspaceId);
   if (!agent || !callSid) return Response.json({ error: "Agent unavailable" }, { status: 404 });
   const last = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  const previousAssistant = [...messages].reverse().find((m) => m.role === "assistant")?.content ?? "";
+  const confirmed = /^(yes|yeah|yep|please|sure|okay|ok|hongu|ehe|ndibatanidzei|connect me)[.! ]*$/i.test(last.trim());
+  const offered = /(connect|transfer|human|team member|person|ndikubatanidze|munhu)/i.test(previousAssistant);
+  if (confirmed && offered) {
+    const profile = await getCompanyProfile(workspaceId);
+    if (profile?.transferPhone) {
+      const sid = process.env.TWILIO_ACCOUNT_SID, token = process.env.TWILIO_AUTH_TOKEN;
+      if (sid && token) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://vox-rust-six.vercel.app";
+        const callback = `${appUrl}/api/voice/transfer-status?workspaceId=${encodeURIComponent(workspaceId)}&callSid=${encodeURIComponent(callSid)}`;
+        const xml = `<Response><Say>Please hold while I connect you.</Say><Dial action="${callback.replaceAll("&", "&amp;")}" method="POST">${profile.transferPhone}</Dial></Response>`;
+        const transfer = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls/${callSid}.json`, {
+          method: "POST",
+          headers: { authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ Twiml: xml }),
+        });
+        if (transfer.ok) {
+          await addAuditEvent(workspaceId, "voice-bot", "call.transfer_started", { callSid, transferPhone: profile.transferPhone });
+          return Response.json({ reply: "Certainly. Please hold while I connect you to a team member.", transferring: true });
+        }
+      }
+    }
+  }
   const context = await retrieveContext(workspaceId, last);
   const reply = await generateReply(agent, messages, context?.text, {
     workspaceId, agentId, channel: "voice",

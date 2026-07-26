@@ -6,7 +6,7 @@ import { isVoxAdmin } from "@/lib/admin";
 import { requireSession } from "@/lib/auth/session-cookies";
 import { ingestSource } from "@/lib/rag";
 import { isDbEnabled } from "@/lib/db";
-import { getBotRequest, getAgentById, getWorkspaceSubscription, updateAgentBilling, updateBotRequest, upsertAgent } from "@/lib/repository";
+import { getBotRequest, getAgentById, getCompanyProfile, getWorkspaceSubscription, updateAgentBilling, updateBotRequest, upsertAgent, upsertCompanyProfile, upsertPhoneNumber } from "@/lib/repository";
 import { plans } from "@/lib/pricing";
 import { requestPythonBuild } from "@/lib/python-bot";
 import type { Agent, BotRequestStatus } from "@/lib/types";
@@ -83,4 +83,31 @@ export async function updateRequestWorkflow(formData: FormData) {
   await updateBotRequest({ id, status, agentId: request.agentId, adminNotes });
   revalidatePath(`/dashboard/admin/requests/${id}`);
   revalidatePath("/dashboard/admin/requests");
+}
+
+export async function provisionClientNumbers(formData: FormData) {
+  await adminSession();
+  const id = String(formData.get("id") ?? "");
+  const routingPhone = String(formData.get("routingPhone") ?? "").replace(/[^\d+]/g, "");
+  const request = await getBotRequest(id);
+  if (!request?.agentId) throw new Error("Build the bot before assigning numbers.");
+  if (!/^\+\d{8,15}$/.test(routingPhone)) throw new Error("Enter a valid Twilio routing number.");
+  const sid = process.env.TWILIO_ACCOUNT_SID, token = process.env.TWILIO_AUTH_TOKEN;
+  if (!sid || !token) throw new Error("Twilio is not configured.");
+  const authorization = `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`;
+  const found = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(routingPhone)}`, { headers: { authorization } });
+  const data = await found.json();
+  const numberSid = data.incoming_phone_numbers?.[0]?.sid;
+  if (!numberSid) throw new Error("That number is not owned by this Twilio account.");
+  const voiceUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://vox-rust-six.vercel.app"}/api/voice/incoming`;
+  const configured = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/IncomingPhoneNumbers/${numberSid}.json`, {
+    method: "POST", headers: { authorization, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ VoiceUrl: voiceUrl, VoiceMethod: "POST" }),
+  });
+  if (!configured.ok) throw new Error("Twilio rejected the webhook configuration.");
+  await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: routingPhone, channel: "voice", agentId: request.agentId }, request.workspaceId);
+  if (request.whatsappPhone) await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: request.whatsappPhone, channel: "whatsapp", agentId: request.agentId }, request.workspaceId);
+  const profile = await getCompanyProfile(request.workspaceId);
+  if (profile) await upsertCompanyProfile({ ...profile, routingPhone, updatedAt: new Date().toISOString() });
+  revalidatePath(`/dashboard/admin/requests/${id}`);
 }

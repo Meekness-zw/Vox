@@ -18,6 +18,15 @@ export async function submitBotRequest(
     return { error: "Please complete the business, services, and hours fields." };
   }
   const now = new Date().toISOString();
+  const phone = (name: string) => {
+    const normalized = value(name).replace(/[^\d+]/g, "");
+    return /^\+\d{8,15}$/.test(normalized) ? normalized : "";
+  };
+  let businessSchedule: BotRequest["businessSchedule"] = [];
+  try { businessSchedule = JSON.parse(value("businessSchedule")); } catch {}
+  if (!phone("companyPhone") || !phone("transferPhone") || !phone("whatsappPhone")) {
+    return { error: "Please enter valid company, transfer, and WhatsApp numbers with country codes." };
+  }
   const subscription = await getWorkspaceSubscription(session.workspaceId);
   const isPaid = subscription.status === "active";
   const request: BotRequest = {
@@ -31,6 +40,10 @@ export async function submitBotRequest(
     languages: value("languages") || "English",
     tone: value("tone") || "Friendly, professional, and concise",
     escalation: value("escalation") || "Take contact details and notify a human team member.",
+    companyPhone: phone("companyPhone"),
+    transferPhone: phone("transferPhone"),
+    whatsappPhone: phone("whatsappPhone"),
+    businessSchedule,
     channels: formData.getAll("channels").map(String),
     contactName: session.name,
     contactEmail: session.email,
@@ -50,6 +63,10 @@ export async function submitBotRequest(
     languages: request.languages,
     tone: request.tone,
     escalation: request.escalation,
+    companyPhone: request.companyPhone,
+    transferPhone: request.transferPhone,
+    whatsappPhone: request.whatsappPhone,
+    businessSchedule,
     updatedAt: now,
   });
   redirect(isPaid

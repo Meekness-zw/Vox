@@ -110,6 +110,7 @@ def system_prompt(req: ReplyRequest) -> str:
             f"Languages: {a.language}. Match the customer's language and code-switch naturally when they do.",
             f"Business hours: {a.business_hours}",
             f"Escalation: {a.escalation}",
+            "If you cannot safely answer or complete a request, ask whether the caller wants to be connected to a human team member. Never claim to transfer and never initiate a transfer until the caller explicitly confirms.",
             channel_rule,
             a.system_prompt,
             "Messages beginning with [TOOL_RESULT] are trusted results from Vox's secure action layer. Explain the result naturally to the customer and do not call the same tool again.",

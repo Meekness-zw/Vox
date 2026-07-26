@@ -173,6 +173,11 @@ export type BotRequest = {
   languages: string;
   tone: string;
   escalation: string;
+  companyPhone?: string;
+  routingPhone?: string;
+  transferPhone?: string;
+  whatsappPhone?: string;
+  businessSchedule?: { day: string; enabled: boolean; opens: string; closes: string }[];
   channels: string[];
   contactName: string;
   contactEmail: string;
@@ -227,5 +232,10 @@ export type CompanyProfile = {
   languages: string;
   tone: string;
   escalation: string;
+  companyPhone?: string;
+  routingPhone?: string;
+  transferPhone?: string;
+  whatsappPhone?: string;
+  businessSchedule?: { day: string; enabled: boolean; opens: string; closes: string }[];
   updatedAt: string;
 };

@@ -603,6 +603,11 @@ function rowToBotRequest(r: Record<string, unknown>): BotRequest {
     languages: r.languages as string,
     tone: r.tone as string,
     escalation: r.escalation as string,
+    companyPhone: (r.company_phone as string) || undefined,
+    routingPhone: (r.routing_phone as string) || undefined,
+    transferPhone: (r.transfer_phone as string) || undefined,
+    whatsappPhone: (r.whatsapp_phone as string) || undefined,
+    businessSchedule: (r.business_schedule as BotRequest["businessSchedule"]) ?? [],
     channels: (r.channels as string[]) ?? [],
     contactName: r.contact_name as string,
     contactEmail: r.contact_email as string,
@@ -622,12 +627,15 @@ export async function createBotRequest(request: BotRequest): Promise<void> {
   await sql`
     insert into bot_requests (id, workspace_id, business_name, industry, description,
       services, business_hours, languages, tone, escalation, channels, contact_name,
-      contact_email, status, admin_notes, agent_id, created_at, updated_at)
+      contact_email, status, admin_notes, agent_id, created_at, updated_at,
+      company_phone, routing_phone, transfer_phone, whatsapp_phone, business_schedule)
     values (${request.id}, ${request.workspaceId}, ${request.businessName}, ${request.industry},
       ${request.description}, ${request.services}, ${request.businessHours}, ${request.languages},
       ${request.tone}, ${request.escalation}, ${sql.json(request.channels)}, ${request.contactName},
       ${request.contactEmail}, ${request.status}, ${request.adminNotes}, ${request.agentId ?? null},
-      ${request.createdAt}, ${request.updatedAt})
+      ${request.createdAt}, ${request.updatedAt}, ${request.companyPhone ?? null},
+      ${request.routingPhone ?? null}, ${request.transferPhone ?? null},
+      ${request.whatsappPhone ?? null}, ${sql.json(request.businessSchedule ?? [])})
   `;
 }
 
@@ -815,14 +823,20 @@ export async function upsertCompanyProfile(profile: CompanyProfile): Promise<voi
   if (!sql) return;
   await sql`
     insert into company_profiles (workspace_id, business_name, industry, description, services,
-      business_hours, languages, tone, escalation, updated_at)
+      business_hours, languages, tone, escalation, updated_at, company_phone,
+      routing_phone, transfer_phone, whatsapp_phone, business_schedule)
     values (${profile.workspaceId}, ${profile.businessName}, ${profile.industry}, ${profile.description},
       ${profile.services}, ${profile.businessHours}, ${profile.languages}, ${profile.tone},
-      ${profile.escalation}, ${profile.updatedAt})
+      ${profile.escalation}, ${profile.updatedAt}, ${profile.companyPhone ?? null},
+      ${profile.routingPhone ?? null}, ${profile.transferPhone ?? null},
+      ${profile.whatsappPhone ?? null}, ${sql.json(profile.businessSchedule ?? [])})
     on conflict (workspace_id) do update set business_name = excluded.business_name,
       industry = excluded.industry, description = excluded.description, services = excluded.services,
       business_hours = excluded.business_hours, languages = excluded.languages, tone = excluded.tone,
-      escalation = excluded.escalation, updated_at = excluded.updated_at
+      escalation = excluded.escalation, company_phone=excluded.company_phone,
+      routing_phone=excluded.routing_phone, transfer_phone=excluded.transfer_phone,
+      whatsapp_phone=excluded.whatsapp_phone, business_schedule=excluded.business_schedule,
+      updated_at = excluded.updated_at
   `;
 }
 
@@ -834,6 +848,11 @@ export async function getCompanyProfile(workspaceId: string): Promise<CompanyPro
   return { workspaceId, businessName: r.business_name as string, industry: r.industry as string,
     description: r.description as string, services: r.services as string, businessHours: r.business_hours as string,
     languages: r.languages as string, tone: r.tone as string, escalation: r.escalation as string,
+    companyPhone: (r.company_phone as string) || undefined,
+    routingPhone: (r.routing_phone as string) || undefined,
+    transferPhone: (r.transfer_phone as string) || undefined,
+    whatsappPhone: (r.whatsapp_phone as string) || undefined,
+    businessSchedule: (r.business_schedule as CompanyProfile["businessSchedule"]) ?? [],
     updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at) };
 }
 
