@@ -787,6 +787,16 @@ export async function updateWorkspaceSubscription(input: {
   `;
 }
 
+export async function releasePaidBotRequests(workspaceId: string) {
+  if (!sql) return;
+  await sql`
+    update bot_requests set status='submitted',
+      admin_notes='Payment activated by Vox admin. Ready for review.',
+      updated_at=now()
+    where workspace_id=${workspaceId} and status='payment_required'
+  `;
+}
+
 export async function findWorkspaceByStripeSubscription(subscriptionId: string): Promise<string | undefined> {
   if (!sql) return undefined;
   const rows = await sql`select id from workspaces where stripe_subscription_id = ${subscriptionId} limit 1`;

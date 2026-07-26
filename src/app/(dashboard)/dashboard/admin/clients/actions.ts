@@ -5,8 +5,10 @@ import { redirect } from "next/navigation";
 import { isVoxAdmin } from "@/lib/admin";
 import { requireSession } from "@/lib/auth/session-cookies";
 import {
+  addAuditEvent,
   createBotRequest,
   getWorkspaceSubscription,
+  releasePaidBotRequests,
   updateWorkspaceSubscription,
   upsertCompanyProfile,
 } from "@/lib/repository";
@@ -15,6 +17,32 @@ import type { BotRequest, SubscriptionStatus } from "@/lib/types";
 async function requireAdmin() {
   const session = await requireSession();
   if (!isVoxAdmin(session.email)) throw new Error("Vox administrator access required.");
+  return session;
+}
+
+export async function setClientPaidStatus(formData: FormData) {
+  const session = await requireAdmin();
+  const workspaceId = String(formData.get("workspaceId") ?? "");
+  const paid = String(formData.get("paid") ?? "") === "true";
+  if (!workspaceId) throw new Error("Workspace is required.");
+  const current = await getWorkspaceSubscription(workspaceId);
+  const dueAt = new Date();
+  dueAt.setDate(dueAt.getDate() + 30);
+  await updateWorkspaceSubscription({
+    workspaceId,
+    plan: paid ? (current.plan === "free" ? "starter" : current.plan) : "free",
+    status: paid ? "active" : "free",
+    dueAt: paid ? dueAt.toISOString() : undefined,
+  });
+  if (paid) await releasePaidBotRequests(workspaceId);
+  await addAuditEvent(
+    workspaceId,
+    session.email,
+    paid ? "subscription.marked_paid" : "subscription.moved_to_free",
+    { previousPlan: current.plan, previousStatus: current.status }
+  );
+  revalidatePath("/dashboard/admin/clients");
+  revalidatePath("/dashboard/admin/requests");
 }
 
 export async function updateClientSubscription(formData: FormData) {
