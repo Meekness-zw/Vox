@@ -11,9 +11,10 @@ import {
   Sparkles,
   Send,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PricingCards } from "@/components/marketing/pricing-cards";
+import { cn } from "@/lib/utils";
 
 const coreFeatures = [
   {
@@ -91,27 +92,23 @@ export default function LandingPage() {
               AI receptionist + chat in one platform
             </Badge>
             <h1 className="text-balance text-4xl font-bold tracking-tight sm:text-6xl">
-              Never miss a call or a message again
+              An AI receptionist that answers, books and follows up
             </h1>
-            <p className="mx-auto mt-5 max-w-2xl text-balance text-lg text-muted-foreground">
-              Vox gives every business an AI voice agent and chat agent that
-              answer 24/7, book appointments, and follow up over SMS — trained
-              on your own knowledge base.
+            <p className="mx-auto mt-5 max-w-2xl text-balance text-lg leading-8 text-muted-foreground">
+              Vox answers phone calls, WhatsApp and website messages 24/7 using
+              your company&apos;s information. It books real appointments and
+              connects callers to your team when human help is needed.
             </p>
-            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              <Link href="/signup">
-                <Button size="lg">
-                  Get started free <ArrowRight className="size-4" />
-                </Button>
+            <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+              <Link href="/signup" className={cn(buttonVariants({ size: "lg" }), "min-w-56 shadow-lg")}>
+                Build my AI receptionist <ArrowRight className="size-4" />
               </Link>
-              <Link href="/demo">
-                <Button size="lg" variant="secondary">
-                  Try the live chat demo
-                </Button>
+              <Link href="/demo" className={cn(buttonVariants({ size: "lg", variant: "outline" }), "min-w-48")}>
+                Hear Vox live
               </Link>
             </div>
-            <p className="mt-4 text-xs text-muted-foreground">
-              No credit card required · Launch in minutes
+            <p className="mt-4 text-base text-muted-foreground">
+              Test before you pay · English and Shona · Human call transfer
             </p>
           </div>
 
@@ -125,14 +122,14 @@ export default function LandingPage() {
       {/* Logos / integrations strip */}
       <section className="border-y border-border bg-card/50">
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-          <p className="text-center text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="text-center text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Works with the tools you already use
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
             {integrations.map((name) => (
               <span
                 key={name}
-                className="text-sm font-medium text-muted-foreground"
+                className="text-base font-medium text-muted-foreground"
               >
                 {name}
               </span>
@@ -161,14 +158,14 @@ export default function LandingPage() {
                 <f.icon className="size-5" />
               </div>
               <h3 className="mt-4 font-semibold">{f.title}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{f.desc}</p>
+              <p className="mt-2 text-base leading-7 text-muted-foreground">{f.desc}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* How it works */}
-      <section className="border-y border-border bg-card/50">
+      <section id="how-it-works" className="scroll-mt-20 border-y border-border bg-card/50">
         <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
@@ -183,7 +180,7 @@ export default function LandingPage() {
               <div key={s.n}>
                 <div className="text-sm font-semibold text-primary">{s.n}</div>
                 <h3 className="mt-2 text-lg font-semibold">{s.title}</h3>
-                <p className="mt-2 text-sm text-muted-foreground">{s.desc}</p>
+                <p className="mt-2 text-base leading-7 text-muted-foreground">{s.desc}</p>
               </div>
             ))}
           </div>
@@ -203,7 +200,7 @@ export default function LandingPage() {
               automatically, with sentiment detection and context memory across
               the whole conversation.
             </p>
-            <ul className="mt-6 space-y-2 text-sm text-muted-foreground">
+            <ul className="mt-6 space-y-3 text-base leading-7 text-muted-foreground">
               <li>• Natural, multi-turn conversations with interruption handling</li>
               <li>• Call recording, summaries, action items & transcripts</li>
               <li>• Missed-call recovery and human handoff when it matters</li>
@@ -216,7 +213,7 @@ export default function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section id="pricing" className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
+      <section id="pricing" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-20 sm:px-6">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
             Simple, transparent pricing
@@ -242,11 +239,7 @@ export default function LandingPage() {
             card required.
           </p>
           <div className="mt-8 flex justify-center">
-            <Link href="/signup">
-              <Button size="lg" variant="secondary">
-                Get started free <ArrowRight className="size-4" />
-              </Button>
-            </Link>
+            <Link href="/signup" className={cn(buttonVariants({ size: "lg", variant: "secondary" }), "min-w-56")}>Build my AI receptionist <ArrowRight className="size-4" /></Link>
           </div>
         </div>
       </section>

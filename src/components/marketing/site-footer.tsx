@@ -21,12 +21,12 @@ const columns = [
     ],
   },
   {
-    title: "Company",
+    title: "Get started",
     links: [
-      { href: "#", label: "About" },
-      { href: "#", label: "Contact sales" },
-      { href: "#", label: "Privacy" },
-      { href: "#", label: "Terms" },
+      { href: "/signup", label: "Create an account" },
+      { href: "/demo", label: "Try the live demo" },
+      { href: "/login", label: "Client sign in" },
+      { href: "mailto:meeknesskaboti@gmail.com", label: "Contact Vox" },
     ],
   },
 ];
@@ -37,7 +37,7 @@ export function SiteFooter() {
       <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 py-12 sm:px-6 md:grid-cols-4">
         <div className="col-span-2 md:col-span-1">
           <Logo />
-          <p className="mt-3 max-w-xs text-sm text-muted-foreground">
+          <p className="mt-3 max-w-xs text-base leading-7 text-muted-foreground">
             AI voice & chat agents that answer every call and message, 24/7.
           </p>
         </div>
@@ -49,7 +49,7 @@ export function SiteFooter() {
                 <li key={`${l.label}-${i}`}>
                   <Link
                     href={l.href}
-                    className="text-sm text-muted-foreground hover:text-foreground"
+                    className="text-base text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {l.label}
                   </Link>
@@ -60,8 +60,8 @@ export function SiteFooter() {
         ))}
       </div>
       <div className="border-t border-border">
-        <div className="mx-auto max-w-6xl px-4 py-6 text-xs text-muted-foreground sm:px-6">
-          © {new Date().getFullYear()} Vox AI. Built as an MVP reference implementation.
+        <div className="mx-auto max-w-6xl px-4 py-6 text-sm text-muted-foreground sm:px-6">
+          © {new Date().getFullYear()} Vox AI. AI receptionists for calls and messages.
         </div>
       </div>
     </footer>

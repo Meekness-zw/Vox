@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Check } from "lucide-react";
 import { plans } from "@/lib/pricing";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -27,26 +27,30 @@ export function PricingCards() {
               {plan.priceLabel}
             </span>
             {plan.price !== null && (
-              <span className="text-sm text-muted-foreground">/month</span>
+              <span className="text-base text-muted-foreground">/month</span>
             )}
           </div>
-          <p className="mt-3 min-h-10 text-sm text-muted-foreground">
+          <p className="mt-3 min-h-12 text-base leading-6 text-muted-foreground">
             {plan.tagline}
           </p>
 
           <Link
-            href={plan.id === "enterprise" ? "#contact" : "/signup"}
-            className="mt-5"
+            href={
+              plan.id === "enterprise"
+                ? "mailto:meeknesskaboti@gmail.com?subject=Vox%20Enterprise"
+                : "/signup"
+            }
+            className={cn(
+              buttonVariants({
+                variant: plan.highlighted ? "primary" : "secondary",
+              }),
+              "mt-5 w-full"
+            )}
           >
-            <Button
-              className="w-full"
-              variant={plan.highlighted ? "primary" : "secondary"}
-            >
-              {plan.cta}
-            </Button>
+            {plan.cta}
           </Link>
 
-          <ul className="mt-6 space-y-3 text-sm">
+          <ul className="mt-6 space-y-3 text-base">
             {plan.features.map((f) => (
               <li key={f} className="flex items-start gap-2">
                 <Check className="mt-0.5 size-4 shrink-0 text-primary" />
