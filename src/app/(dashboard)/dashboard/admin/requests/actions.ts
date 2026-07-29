@@ -6,7 +6,7 @@ import { isVoxAdmin } from "@/lib/admin";
 import { requireSession } from "@/lib/auth/session-cookies";
 import { ingestSource } from "@/lib/rag";
 import { isDbEnabled } from "@/lib/db";
-import { getBotRequest, getAgentById, getCompanyProfile, getWorkspaceSubscription, updateAgentBilling, updateBotRequest, upsertAgent, upsertCompanyProfile, upsertPhoneNumber } from "@/lib/repository";
+import { getAdminBotRequest, getAgentById, getCompanyProfile, getWorkspaceSubscription, updateAgentBilling, updateBotRequest, upsertAgent, upsertCompanyProfile, upsertPhoneNumber } from "@/lib/repository";
 import { plans } from "@/lib/pricing";
 import { requestPythonBuild } from "@/lib/python-bot";
 import type { Agent, BotRequestStatus } from "@/lib/types";
@@ -14,13 +14,14 @@ import type { Agent, BotRequestStatus } from "@/lib/types";
 async function adminSession() {
   const session = await requireSession();
   if (!isVoxAdmin(session.email)) throw new Error("Vox administrator access required.");
+  if (!isDbEnabled) throw new Error("The admin dashboard requires DATABASE_URL.");
   return session;
 }
 
 export async function buildRequestedBot(formData: FormData) {
   await adminSession();
   const id = String(formData.get("id") ?? "");
-  const request = await getBotRequest(id);
+  const request = await getAdminBotRequest(id);
   if (!request) throw new Error("Bot request not found.");
   const subscription = await getWorkspaceSubscription(request.workspaceId);
   if (subscription.status !== "active") {
@@ -72,7 +73,7 @@ export async function updateRequestWorkflow(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   const status = String(formData.get("status") ?? "under_review") as BotRequestStatus;
   const adminNotes = String(formData.get("adminNotes") ?? "").trim();
-  const request = await getBotRequest(id);
+  const request = await getAdminBotRequest(id);
   if (!request) throw new Error("Bot request not found.");
   if (status === "live") {
     if (!request.agentId) throw new Error("Build the bot before publishing it.");
@@ -89,7 +90,7 @@ export async function provisionClientNumbers(formData: FormData) {
   await adminSession();
   const id = String(formData.get("id") ?? "");
   const routingPhone = String(formData.get("routingPhone") ?? "").replace(/[^\d+]/g, "");
-  const request = await getBotRequest(id);
+  const request = await getAdminBotRequest(id);
   if (!request?.agentId) throw new Error("Build the bot before assigning numbers.");
   if (!/^\+\d{8,15}$/.test(routingPhone)) throw new Error("Enter a valid Twilio routing number.");
   const sid = process.env.TWILIO_ACCOUNT_SID, token = process.env.TWILIO_AUTH_TOKEN;

@@ -24,7 +24,16 @@ export default async function OperationsPage() {
     endpoint("https://vox-production-12ac.up.railway.app/health"),
     endpoint("https://vox-rust-six.vercel.app/"),
   ]);
-  const services = [{ name: "Vercel application", ...vercel }, { name: "Railway Python engine", ...railway }, { name: "Supabase database", ok: true, latency: 0, status: 200 }];
+  const services = [
+    { name: "Vercel application", ...vercel },
+    { name: "Railway Python engine", ...railway },
+    {
+      name: "Supabase database",
+      ok: true,
+      latency: snapshot.databaseLatency,
+      status: 200,
+    },
+  ];
   return <><Topbar title="Operations" /><div className="space-y-6 p-4 sm:p-6">
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
       <StatCard label="Active users" value={String(snapshot.users)} />

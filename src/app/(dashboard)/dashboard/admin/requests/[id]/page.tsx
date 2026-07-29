@@ -9,14 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { isVoxAdmin } from "@/lib/admin";
 import { requireSession } from "@/lib/auth/session-cookies";
-import { getBotRequest } from "@/lib/repository";
+import { getAdminBotRequest } from "@/lib/repository";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminRequestPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await requireSession();
   if (!isVoxAdmin(session.email)) redirect("/dashboard");
-  const request = await getBotRequest((await params).id);
+  const request = await getAdminBotRequest((await params).id);
   if (!request) notFound();
   const fields = [
     ["Industry", request.industry], ["About", request.description],

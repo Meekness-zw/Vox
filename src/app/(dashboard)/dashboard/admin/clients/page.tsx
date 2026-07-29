@@ -27,6 +27,7 @@ export default async function AdminClientsPage() {
       <StatCard label="Past due" value={String(clients.filter(c => c.subscriptionStatus === "past_due").length)} />
     </div>
     <Card><CardHeader><CardTitle>All users and subscriptions</CardTitle></CardHeader><CardContent className="space-y-4">
+      {!clients.length && <p className="text-sm text-muted-foreground">No client accounts exist in the database yet.</p>}
       {clients.map(client => <div key={client.workspaceId} className="rounded-xl border p-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
           <div className="flex min-w-0 flex-1 items-center gap-3"><div className="flex size-10 items-center justify-center rounded-lg bg-accent"><Users className="size-5" /></div><div className="min-w-0">

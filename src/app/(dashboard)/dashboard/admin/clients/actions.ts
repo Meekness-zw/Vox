@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isVoxAdmin } from "@/lib/admin";
 import { requireSession } from "@/lib/auth/session-cookies";
+import { isDbEnabled } from "@/lib/db";
 import {
   addAuditEvent,
   createBotRequest,
@@ -17,6 +18,7 @@ import type { BotRequest, SubscriptionStatus } from "@/lib/types";
 async function requireAdmin() {
   const session = await requireSession();
   if (!isVoxAdmin(session.email)) throw new Error("Vox administrator access required.");
+  if (!isDbEnabled) throw new Error("The admin dashboard requires DATABASE_URL.");
   return session;
 }
 

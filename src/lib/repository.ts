@@ -27,6 +27,15 @@ const demoBotRequests: BotRequest[] = [];
 const demoBusinessDocuments: BusinessDocument[] = [];
 const demoDocumentTemplates = new Map<string, DocumentTemplate>();
 
+function requireAdminDatabase() {
+  if (!sql) {
+    throw new Error(
+      "The admin dashboard requires DATABASE_URL. Demo data is disabled for platform administration."
+    );
+  }
+  return sql;
+}
+
 export type WorkspaceUser = {
   id: string;
   name: string;
@@ -647,11 +656,23 @@ export async function listBotRequests(workspaceId?: string): Promise<BotRequest[
   return rows.map(rowToBotRequest);
 }
 
+export async function listAdminBotRequests(): Promise<BotRequest[]> {
+  const db = requireAdminDatabase();
+  const rows = await db`select * from bot_requests order by created_at desc`;
+  return rows.map(rowToBotRequest);
+}
+
 export async function getBotRequest(id: string, workspaceId?: string): Promise<BotRequest | undefined> {
   if (!sql) return demoBotRequests.find((r) => r.id === id && (!workspaceId || r.workspaceId === workspaceId));
   const rows = workspaceId
     ? await sql`select * from bot_requests where id = ${id} and workspace_id = ${workspaceId} limit 1`
     : await sql`select * from bot_requests where id = ${id} limit 1`;
+  return rows.length ? rowToBotRequest(rows[0]) : undefined;
+}
+
+export async function getAdminBotRequest(id: string): Promise<BotRequest | undefined> {
+  const db = requireAdminDatabase();
+  const rows = await db`select * from bot_requests where id = ${id} limit 1`;
   return rows.length ? rowToBotRequest(rows[0]) : undefined;
 }
 
@@ -677,23 +698,8 @@ export async function updateBotRequest(input: {
 /* ---- platform admin: bot fleet & billing -------------------------------- */
 
 export async function listAdminBots(): Promise<AdminBotRecord[]> {
-  if (!sql) {
-    return mockAgents.map((agent) => ({
-      id: agent.id,
-      workspaceId: "ws_demo",
-      workspaceName: "Bright Smile Dental",
-      clientEmail: "demo@vox.ai",
-      name: agent.name,
-      type: agent.type,
-      status: agent.status,
-      billingStatus: "trial" as const,
-      priceCents: 29900,
-      conversations: mockConversations.filter((c) => c.agentId === agent.id).length,
-      appointments: mockAppointments.filter((a) => a.agentId === agent.id).length,
-      createdAt: agent.createdAt,
-    }));
-  }
-  const rows = await sql`
+  const db = requireAdminDatabase();
+  const rows = await db`
     select a.id, a.workspace_id, w.name workspace_name, a.name, a.type, a.status,
       a.billing_status, a.price_cents, a.paid_through, a.created_at,
       coalesce((select min(u.email) from users u where u.workspace_id = a.workspace_id), '') client_email,
@@ -725,8 +731,8 @@ export async function updateAgentBilling(input: {
   priceCents: number;
   paidThrough?: string;
 }): Promise<void> {
-  if (!sql) return;
-  await sql`
+  const db = requireAdminDatabase();
+  await db`
     update agents set billing_status = ${input.billingStatus},
       price_cents = ${input.priceCents}, paid_through = ${input.paidThrough ?? null}
     where id = ${input.agentId}
@@ -740,12 +746,8 @@ export async function updateAdminAgentState(input: {
   priceCents: number;
   paidThrough?: string;
 }): Promise<void> {
-  if (!sql) {
-    const agent = mockAgents.find((item) => item.id === input.agentId);
-    if (agent) agent.status = input.status;
-    return;
-  }
-  await sql`
+  const db = requireAdminDatabase();
+  await db`
     update agents set status = ${input.status}, billing_status = ${input.billingStatus},
       price_cents = ${input.priceCents}, paid_through = ${input.paidThrough || null}
     where id = ${input.agentId}
@@ -777,8 +779,8 @@ export async function updateWorkspaceSubscription(input: {
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
 }): Promise<void> {
-  if (!sql) return;
-  await sql`
+  const db = requireAdminDatabase();
+  await db`
     update workspaces set plan = ${input.plan}, subscription_status = ${input.status},
       subscription_due_at = ${input.dueAt || null},
       stripe_customer_id = coalesce(${input.stripeCustomerId || null}, stripe_customer_id),
@@ -788,8 +790,8 @@ export async function updateWorkspaceSubscription(input: {
 }
 
 export async function releasePaidBotRequests(workspaceId: string) {
-  if (!sql) return;
-  await sql`
+  const db = requireAdminDatabase();
+  await db`
     update bot_requests set status='submitted',
       admin_notes='Payment activated by Vox admin. Ready for review.',
       updated_at=now()
@@ -804,8 +806,8 @@ export async function findWorkspaceByStripeSubscription(subscriptionId: string):
 }
 
 export async function listAdminClients(): Promise<AdminClientRecord[]> {
-  if (!sql) return [{ workspaceId: "ws_demo", workspaceName: "Bright Smile Dental", plan: "growth", subscriptionStatus: "active", ownerName: "Demo User", ownerEmail: "demo@vox.ai", users: 1, bots: mockAgents.length, createdAt: new Date().toISOString() }];
-  const rows = await sql`
+  const db = requireAdminDatabase();
+  const rows = await db`
     select w.*, coalesce(owner.name, '') owner_name, coalesce(owner.email, '') owner_email,
       (select count(*)::int from users u where u.workspace_id = w.id) users,
       (select count(*)::int from agents a where a.workspace_id = w.id) bots
@@ -974,18 +976,21 @@ export async function listSmsMessages(workspaceId: string) {
 }
 
 export async function getOperationsSnapshot() {
-  if (!sql) return { failedCrm: 0, failedSms: 0, activeCalls: 0, users: 0, agents: 0 };
-  const [row] = await sql`
+  const db = requireAdminDatabase();
+  const started = Date.now();
+  const [row] = await db`
     select
       (select count(*)::int from crm_deliveries where status='failed') as failed_crm,
       (select count(*)::int from sms_messages where status='failed') as failed_sms,
-      (select count(*)::int from voice_call_sessions) as active_calls,
+      (select count(*)::int from voice_call_sessions
+        where updated_at >= now() - interval '5 minutes') as active_calls,
       (select count(*)::int from users where status='active') as users,
       (select count(*)::int from agents where status='active') as agents
   `;
   return {
     failedCrm: Number(row.failed_crm), failedSms: Number(row.failed_sms),
     activeCalls: Number(row.active_calls), users: Number(row.users), agents: Number(row.agents),
+    databaseLatency: Date.now() - started,
   };
 }
 
