@@ -42,7 +42,13 @@ export async function POST(req: Request) {
     }
   }
   const context = await retrieveContext(workspaceId, last);
-  const reply = await generateReply(agent, messages, context?.text, {
+  const languageMode = String(body.languageMode ?? "auto").toLowerCase();
+  const callAgent = languageMode === "shona"
+    ? { ...agent, language: "CALL_LANGUAGE: Shona. Reply only in natural Shona unless the caller explicitly asks to switch to English." }
+    : languageMode === "english"
+      ? { ...agent, language: "CALL_LANGUAGE: English. Reply only in English unless the caller explicitly asks to switch to Shona." }
+      : agent;
+  const reply = await generateReply(callAgent, messages, context?.text, {
     workspaceId, agentId, channel: "voice",
     conversationId: `cv_${callSid}`, contactPhone: String(body.caller ?? ""),
   });

@@ -55,7 +55,8 @@ export async function POST(req: Request) {
     const token = createHmac("sha256", serviceToken).update(payload).digest("hex");
     return connectMediaStream(streamUrl, {
       callSid, workspaceId, agentId: agent.id, caller: from,
-      greeting: agent.greeting.slice(0, 400), expires, token,
+      greeting: agent.greeting.slice(0, 400), language: agent.language.slice(0, 100),
+      expires, token,
     });
   }
 

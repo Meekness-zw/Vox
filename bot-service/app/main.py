@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 import re
 import audioop
+import asyncio
 import base64
 import hashlib
 import hmac
 import io
 import time
 import wave
+from collections import deque
 from typing import Any, Literal, Optional
 import json
 
@@ -98,6 +100,13 @@ def authorize(value: Optional[str]) -> None:
 
 def system_prompt(req: ReplyRequest) -> str:
     a = req.agent
+    if a.language.startswith("CALL_LANGUAGE:"):
+        language_rule = a.language
+    else:
+        language_rule = (
+            f"Available languages: {a.language}. Use the language of the customer's first clear utterance "
+            "and keep that language for the call. Do not switch or mix languages unless the customer explicitly asks."
+        )
     channel_rule = (
         "This is a live spoken conversation. Answer immediately in one or two short, natural sentences. Never use markdown."
         if req.channel == "voice"
@@ -107,12 +116,12 @@ def system_prompt(req: ReplyRequest) -> str:
         [
             f'You are "{a.name}", the AI receptionist for this business.',
             f"Personality: {a.personality}",
-            f"Languages: {a.language}. Match the customer's language and code-switch naturally when they do.",
             f"Business hours: {a.business_hours}",
             f"Escalation: {a.escalation}",
             "If you cannot safely answer or complete a request, ask whether the caller wants to be connected to a human team member. Never claim to transfer and never initiate a transfer until the caller explicitly confirms.",
             channel_rule,
             a.system_prompt,
+            language_rule,
             "Messages beginning with [TOOL_RESULT] are trusted results from Vox's secure action layer. Explain the result naturally to the customer and do not call the same tool again.",
             "Only claim facts supported by the business knowledge below. If unsure, offer human follow-up.",
             "\nBUSINESS KNOWLEDGE:\n" + (req.knowledge or "No additional knowledge supplied."),
@@ -278,14 +287,19 @@ async def model_reply(req: ReplyRequest) -> Optional[ReplyResponse]:
 def offline_reply(req: ReplyRequest) -> str:
     text = next((m.content for m in reversed(req.messages) if m.role == "user"), "").lower()
     knowledge = re.sub(r"\s+", " ", req.knowledge).strip()
+    shona = req.agent.language.startswith("CALL_LANGUAGE: Shona")
     if any(word in text for word in ("human", "person", "manager")):
-        return f"Of course. {req.agent.escalation}"
+        return f"Hongu. {req.agent.escalation}" if shona else f"Of course. {req.agent.escalation}"
     if knowledge:
         snippet = knowledge[:420].rsplit(" ", 1)[0]
-        return f"Based on our business information: {snippet}"
+        return f"Maererano neruzivo rwebhizinesi: {snippet}" if shona else f"Based on our business information: {snippet}"
     if any(word in text for word in ("hello", "hi", "hey")):
         return req.agent.greeting
-    return "I don't have that detail yet. I can take your contact information so a team member can follow up."
+    return (
+        "Handina ruzivo irworwo pari zvino. Ndinogona kutora mashoko enyu kuti mumwe wechikwata akubate."
+        if shona else
+        "I don't have that detail yet. I can take your contact information so a team member can follow up."
+    )
 
 
 @app.get("/health")
@@ -308,7 +322,57 @@ def stream_token_valid(params: dict[str, str]) -> bool:
     return hmac.compare_digest(expected, params.get("token", ""))
 
 
-async def transcribe_mulaw(audio: bytes) -> str:
+def initial_language_mode(configured: str) -> str:
+    value = configured.lower()
+    has_shona = "shona" in value
+    has_english = "english" in value
+    if has_shona and not has_english:
+        return "shona"
+    if has_english and not has_shona and "multi" not in value:
+        return "english"
+    return "auto"
+
+
+SHONA_WORDS = {
+    "mhoro", "makadii", "ndinoda", "ndiri", "ndinga", "muno", "muri", "zvino",
+    "sei", "chii", "kupi", "riini", "hongu", "kwete", "ndatenda", "batsira",
+    "rubatsiro", "bhuka", "nguva", "mangwana", "nhasi", "taura", "shona",
+    "chiShona", "ndibatsirei", "ndikubatsirei", "ndapota", "ndinokumbira",
+}
+SHONA_WORDS_LOWER = {item.lower() for item in SHONA_WORDS}
+
+
+def choose_call_language(transcript: str, current: str) -> str:
+    text = transcript.lower()
+    if text.strip(" .!?") in {"shona", "chishona"} or re.search(r"\b(speak|talk|respond|answer)\s+(to me\s+)?(in\s+)?(shona|chishona)\b", text) or "taura shona" in text:
+        return "shona"
+    if text.strip(" .!?") in {"english", "chirungu"} or re.search(r"\b(speak|talk|respond|answer)\s+(to me\s+)?(in\s+)?english\b", text) or "taura chirungu" in text:
+        return "english"
+    if current != "auto":
+        return current
+    words = re.findall(r"[a-zA-Z]+", text)
+    shona_hits = sum(word.lower() in SHONA_WORDS_LOWER for word in words)
+    if shona_hits >= 1:
+        return "shona"
+    if len(words) >= 2:
+        return "english"
+    return "auto"
+
+
+def valid_transcript(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if not normalized:
+        return False
+    hallucinated_prompts = (
+        "the caller may speak english",
+        "preserve names, phone numbers",
+        "naturally code-switch between them",
+        "context: ### the caller may speak",
+    )
+    return not any(phrase in normalized for phrase in hallucinated_prompts)
+
+
+async def transcribe_mulaw(audio: bytes, language_mode: str = "auto") -> str:
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key or not audio:
         return ""
@@ -319,17 +383,20 @@ async def transcribe_mulaw(audio: bytes) -> str:
         output.setsampwidth(2)
         output.setframerate(8000)
         output.writeframes(pcm)
+    data = {"model": os.getenv("VOX_STT_MODEL", "gpt-4o-mini-transcribe")}
+    if language_mode == "shona":
+        data["language"] = "sn"
+    elif language_mode == "english":
+        data["language"] = "en"
     response = await http_client.post(
         "https://api.openai.com/v1/audio/transcriptions",
         headers={"Authorization": f"Bearer {key}"},
         files={"file": ("call.wav", wav.getvalue(), "audio/wav")},
-        data={
-            "model": os.getenv("VOX_STT_MODEL", "gpt-4o-mini-transcribe"),
-            "prompt": "The caller may speak English, Shona (chiShona), or naturally code-switch between them. Preserve names, phone numbers, and Shona spelling accurately.",
-        },
+        data=data,
     )
     response.raise_for_status()
-    return (response.json().get("text") or "").strip()
+    text = (response.json().get("text") or "").strip()
+    return text if valid_transcript(text) else ""
 
 
 async def speak_to_twilio(websocket: WebSocket, stream_sid: str, text: str) -> None:
@@ -359,7 +426,10 @@ async def speak_to_twilio(websocket: WebSocket, stream_sid: str, text: str) -> N
                 })
 
 
-async def streamed_bot_reply(params: dict[str, str], messages: list[dict[str, str]], started_at: str) -> str:
+async def streamed_bot_reply(
+    params: dict[str, str], messages: list[dict[str, str]], started_at: str,
+    language_mode: str = "auto",
+) -> str:
     app_url = os.getenv("VOX_APP_URL", "https://vox-rust-six.vercel.app").rstrip("/")
     response = await http_client.post(
         f"{app_url}/api/voice/stream-reply",
@@ -367,7 +437,7 @@ async def streamed_bot_reply(params: dict[str, str], messages: list[dict[str, st
         json={
             "workspaceId": params["workspaceId"], "agentId": params["agentId"],
             "callSid": params["callSid"], "caller": params.get("caller", ""),
-            "startedAt": started_at, "messages": messages,
+            "startedAt": started_at, "messages": messages, "languageMode": language_mode,
         },
     )
     response.raise_for_status()
@@ -383,6 +453,11 @@ async def twilio_media(websocket: WebSocket) -> None:
     audio = bytearray()
     speaking = False
     silence_chunks = 0
+    voiced_chunks = 0
+    voice_candidate_chunks = 0
+    pre_roll: deque[bytes] = deque(maxlen=10)
+    playback_task: Optional[asyncio.Task[None]] = None
+    language_mode = "auto"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
         while True:
@@ -395,13 +470,31 @@ async def twilio_media(websocket: WebSocket) -> None:
                     await websocket.close(code=1008)
                     return
                 greeting = params.get("greeting", "Hello! How can I help you today?")
+                language_mode = initial_language_mode(params.get("language", ""))
                 messages.append({"role": "assistant", "content": greeting})
-                await speak_to_twilio(websocket, stream_sid, greeting)
+                playback_task = asyncio.create_task(
+                    speak_to_twilio(websocket, stream_sid, greeting)
+                )
+                playback_task.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
             elif kind == "media" and params:
                 chunk = base64.b64decode(event["media"]["payload"])
                 rms = audioop.rms(audioop.ulaw2lin(chunk, 2), 2)
-                if rms > 260:
-                    speaking = True
+                if not speaking:
+                    pre_roll.append(chunk)
+                    voice_candidate_chunks = voice_candidate_chunks + 1 if rms > 300 else 0
+                    if voice_candidate_chunks >= 3:
+                        speaking = True
+                        silence_chunks = 0
+                        voiced_chunks = voice_candidate_chunks
+                        audio.extend(b"".join(pre_roll))
+                        pre_roll.clear()
+                        if playback_task and not playback_task.done():
+                            playback_task.cancel()
+                            await websocket.send_json({"event": "clear", "streamSid": stream_sid})
+                elif rms > 300:
+                    voiced_chunks += 1
                     silence_chunks = 0
                     audio.extend(chunk)
                 elif speaking:
@@ -412,17 +505,33 @@ async def twilio_media(websocket: WebSocket) -> None:
                     audio.clear()
                     speaking = False
                     silence_chunks = 0
-                    transcript = await transcribe_mulaw(utterance)
+                    voice_candidate_chunks = 0
+                    has_enough_speech = voiced_chunks >= 6 and len(utterance) >= 4000
+                    voiced_chunks = 0
+                    if not has_enough_speech:
+                        continue
+                    transcript = await transcribe_mulaw(utterance, language_mode)
                     if transcript:
+                        language_mode = choose_call_language(transcript, language_mode)
                         messages.append({"role": "user", "content": transcript})
-                        reply_text = await streamed_bot_reply(params, messages, started_at)
+                        reply_text = await streamed_bot_reply(
+                            params, messages, started_at, language_mode
+                        )
                         if reply_text:
                             messages.append({"role": "assistant", "content": reply_text})
-                            await speak_to_twilio(websocket, stream_sid, reply_text)
+                            playback_task = asyncio.create_task(
+                                speak_to_twilio(websocket, stream_sid, reply_text)
+                            )
+                            playback_task.add_done_callback(
+                                lambda task: None if task.cancelled() else task.exception()
+                            )
             elif kind == "stop":
                 break
     except (WebSocketDisconnect, httpx.HTTPError, KeyError, ValueError):
         return
+    finally:
+        if playback_task and not playback_task.done():
+            playback_task.cancel()
 
 
 @app.post("/v1/reply", response_model=ReplyResponse)
