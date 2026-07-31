@@ -277,6 +277,9 @@ alter table bot_requests add column if not exists company_phone text;
 alter table bot_requests add column if not exists routing_phone text;
 alter table bot_requests add column if not exists transfer_phone text;
 alter table bot_requests add column if not exists whatsapp_phone text;
+alter table bot_requests add column if not exists whatsapp_sender_sid text;
+alter table bot_requests add column if not exists whatsapp_sender_status text;
+alter table bot_requests add column if not exists timezone text not null default 'Africa/Harare';
 alter table bot_requests add column if not exists business_schedule jsonb not null default '[]'::jsonb;
 
 create table if not exists company_profiles (
@@ -295,6 +298,7 @@ alter table company_profiles add column if not exists company_phone text;
 alter table company_profiles add column if not exists routing_phone text;
 alter table company_profiles add column if not exists transfer_phone text;
 alter table company_profiles add column if not exists whatsapp_phone text;
+alter table company_profiles add column if not exists timezone text not null default 'Africa/Harare';
 alter table company_profiles add column if not exists business_schedule jsonb not null default '[]'::jsonb;
 
 create table if not exists team_invitations (

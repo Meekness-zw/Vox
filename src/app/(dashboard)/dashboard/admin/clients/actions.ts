@@ -71,6 +71,15 @@ export async function createManagedBotRequest(formData: FormData) {
     throw new Error("Client, business name, and services are required.");
   }
   const subscription = await getWorkspaceSubscription(workspaceId);
+  let businessSchedule: BotRequest["businessSchedule"] = [];
+  try { businessSchedule = JSON.parse(value("businessSchedule")); } catch {}
+  const timezone = value("timezone") || "Africa/Harare";
+  try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch {
+    throw new Error("Select a valid business timezone.");
+  }
+  if (!Array.isArray(businessSchedule) || businessSchedule.length !== 7) {
+    throw new Error("A complete business schedule is required.");
+  }
   const now = new Date().toISOString();
   const request: BotRequest = {
     id: `br_${crypto.randomUUID()}`,
@@ -83,6 +92,8 @@ export async function createManagedBotRequest(formData: FormData) {
     languages: value("languages") || "English",
     tone: value("tone") || "Friendly, professional, and concise",
     escalation: value("escalation") || "Collect contact details for a human follow-up.",
+    timezone,
+    businessSchedule,
     channels: formData.getAll("channels").map(String),
     contactName: "Vox Admin",
     contactEmail: value("clientEmail"),
@@ -104,6 +115,8 @@ export async function createManagedBotRequest(formData: FormData) {
     languages: request.languages,
     tone: request.tone,
     escalation: request.escalation,
+    timezone,
+    businessSchedule,
     updatedAt: now,
   });
   redirect(`/dashboard/admin/requests/${request.id}`);

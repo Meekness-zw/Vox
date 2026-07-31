@@ -177,6 +177,9 @@ export type BotRequest = {
   routingPhone?: string;
   transferPhone?: string;
   whatsappPhone?: string;
+  whatsappSenderSid?: string;
+  whatsappSenderStatus?: string;
+  timezone?: string;
   businessSchedule?: { day: string; enabled: boolean; opens: string; closes: string }[];
   channels: string[];
   contactName: string;
@@ -236,6 +239,7 @@ export type CompanyProfile = {
   routingPhone?: string;
   transferPhone?: string;
   whatsappPhone?: string;
+  timezone?: string;
   businessSchedule?: { day: string; enabled: boolean; opens: string; closes: string }[];
   updatedAt: string;
 };

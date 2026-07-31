@@ -1,19 +1,14 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useState } from "react";
 import { Loader2, Send } from "lucide-react";
 import { submitBotRequest } from "@/app/(dashboard)/dashboard/request-bot/actions";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
+import { BusinessScheduleFields } from "@/components/dashboard/business-schedule-fields";
 
 export function BotRequestForm() {
   const [state, action, pending] = useActionState(submitBotRequest, {});
-  const [schedule, setSchedule] = useState([
-    ...["Monday","Tuesday","Wednesday","Thursday","Friday"].map(day => ({ day, enabled: true, opens: "08:00", closes: "17:00" })),
-    { day: "Saturday", enabled: false, opens: "08:00", closes: "13:00" },
-    { day: "Sunday", enabled: false, opens: "08:00", closes: "13:00" },
-  ]);
-  const hours = useMemo(() => schedule.map(s => s.enabled ? `${s.day} ${s.opens}–${s.closes}` : `${s.day} closed`).join(", "), [schedule]);
   return (
     <form action={action} className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -22,15 +17,7 @@ export function BotRequestForm() {
       </div>
       <Area label="Tell us about the business" name="description" placeholder="What you do, who you serve, locations, and anything customers should know." />
       <Area label="Services and prices" name="services" placeholder="List each service, price or price range, and useful conditions." />
-      <input type="hidden" name="businessHours" value={hours} />
-      <input type="hidden" name="businessSchedule" value={JSON.stringify(schedule)} />
-      <div className="space-y-3"><Label>Business days and hours</Label>
-        <div className="divide-y rounded-lg border">{schedule.map((s, index) => <div key={s.day} className="grid grid-cols-[120px_1fr_1fr] items-center gap-3 p-3">
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={s.enabled} onChange={e => setSchedule(v => v.map((x,i) => i===index ? {...x,enabled:e.target.checked}:x))} />{s.day}</label>
-          <input type="time" value={s.opens} disabled={!s.enabled} onChange={e => setSchedule(v => v.map((x,i) => i===index ? {...x,opens:e.target.value}:x))} className="rounded-md border bg-background px-2 py-1.5 text-sm" />
-          <input type="time" value={s.closes} disabled={!s.enabled} onChange={e => setSchedule(v => v.map((x,i) => i===index ? {...x,closes:e.target.value}:x))} className="rounded-md border bg-background px-2 py-1.5 text-sm" />
-        </div>)}</div>
-      </div>
+      <BusinessScheduleFields />
       <div className="grid gap-4 sm:grid-cols-2">
         <PhoneField name="companyPhone" label="Public company number" />
         <PhoneField name="transferPhone" label="Human transfer number" />

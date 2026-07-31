@@ -4,6 +4,7 @@ import {
   cancelAppointmentRow,
   getAppointmentById,
   getCalendarConnection,
+  getCompanyProfile,
   insertAppointment,
   listAppointmentsInRange,
   upsertCalendarConnection,
@@ -97,18 +98,18 @@ async function getClientForWorkspace(workspaceId: string) {
 
 /* ---- availability ----------------------------------------------------------- */
 
-const BUSINESS_START_HOUR = 9;
-const BUSINESS_END_HOUR = 17;
 const DEFAULT_TIMEZONE = process.env.VOX_DEFAULT_TIMEZONE?.trim() || "Africa/Harare";
 
 export type AvailabilityResult = { slots: string[]; timezone: string };
 
-function zonedHourToUtc(date: string, hour: number, timezone: string): Date {
+function zonedTimeToUtc(date: string, time: string, timezone: string): Date {
+  const [hour, minute] = time.split(":").map(Number);
   let timestamp = Date.UTC(
     Number(date.slice(0, 4)),
     Number(date.slice(5, 7)) - 1,
     Number(date.slice(8, 10)),
-    hour
+    hour,
+    minute
   );
   // Convert the requested wall-clock time into UTC. A second pass handles
   // daylight-saving boundaries for client workspaces outside Zimbabwe.
@@ -136,28 +137,73 @@ function zonedHourToUtc(date: string, hour: number, timezone: string): Date {
       Number(date.slice(0, 4)),
       Number(date.slice(5, 7)) - 1,
       Number(date.slice(8, 10)),
-      hour
+      hour,
+      minute
     );
   }
   return new Date(timestamp);
 }
 
+const DEFAULT_SCHEDULE = [
+  ...["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((day) => ({
+    day,
+    enabled: true,
+    opens: "09:00",
+    closes: "17:00",
+  })),
+  { day: "Saturday", enabled: false, opens: "09:00", closes: "17:00" },
+  { day: "Sunday", enabled: false, opens: "09:00", closes: "17:00" },
+];
+
+function weekdayForDate(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    timeZone: "UTC",
+  }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function localDateForInstant(instant: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 /**
- * Open slots for `date` (YYYY-MM-DD). Falls back to a naive 9-5 business-hours
- * window minus already-booked appointments when no Google Calendar is
- * connected, so booking works in demo mode with zero configuration; upgrades
- * to real Google Calendar free/busy the moment a workspace connects one.
+ * Open slots for `date` (YYYY-MM-DD), constrained to that client's configured
+ * day, opening/closing times and timezone. Google Calendar contributes busy
+ * periods when connected; Vox appointments are used otherwise.
  */
 export async function getAvailability(
   workspaceId: string,
   date: string,
   durationMinutes = 30
 ): Promise<AvailabilityResult> {
-  const conn = await getClientForWorkspace(workspaceId);
-  const timezone = conn?.timezone ?? DEFAULT_TIMEZONE;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || durationMinutes < 10) {
+    throw new Error("Invalid appointment date or duration");
+  }
+  const [conn, profile] = await Promise.all([
+    getClientForWorkspace(workspaceId),
+    getCompanyProfile(workspaceId),
+  ]);
+  const timezone = profile?.timezone || conn?.timezone || DEFAULT_TIMEZONE;
+  const schedule = profile?.businessSchedule?.length
+    ? profile.businessSchedule
+    : DEFAULT_SCHEDULE;
+  const day = schedule.find((entry) => entry.day === weekdayForDate(date));
+  if (!day?.enabled) return { slots: [], timezone };
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(day.opens) ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(day.closes)) {
+    throw new Error("The business schedule contains an invalid time");
+  }
 
-  const dayStart = zonedHourToUtc(date, BUSINESS_START_HOUR, timezone);
-  const dayEnd = zonedHourToUtc(date, BUSINESS_END_HOUR, timezone);
+  const dayStart = zonedTimeToUtc(date, day.opens, timezone);
+  const dayEnd = zonedTimeToUtc(date, day.closes, timezone);
+  if (dayEnd <= dayStart) return { slots: [], timezone };
 
   const busy: { start: Date; end: Date }[] = [];
 
@@ -211,6 +257,13 @@ export async function bookAppointment(opts: {
 }): Promise<Appointment> {
   const durationMinutes = opts.durationMinutes ?? 30;
   const startsAt = new Date(opts.startsAt).toISOString();
+  const profile = await getCompanyProfile(opts.workspaceId);
+  const timezone = profile?.timezone || DEFAULT_TIMEZONE;
+  const localDate = localDateForInstant(new Date(startsAt), timezone);
+  const availability = await getAvailability(opts.workspaceId, localDate, durationMinutes);
+  if (!availability.slots.includes(startsAt)) {
+    throw new Error("That time is outside business hours or is no longer available");
+  }
   const endsAt = new Date(new Date(opts.startsAt).getTime() + durationMinutes * 60 * 1000).toISOString();
 
   let googleEventId: string | undefined;

@@ -6,10 +6,11 @@ import { isVoxAdmin } from "@/lib/admin";
 import { requireSession } from "@/lib/auth/session-cookies";
 import { ingestSource } from "@/lib/rag";
 import { isDbEnabled } from "@/lib/db";
-import { getAdminBotRequest, getAgentById, getCompanyProfile, getWorkspaceSubscription, updateAgentBilling, updateBotRequest, upsertAgent, upsertCompanyProfile, upsertPhoneNumber } from "@/lib/repository";
+import { addAuditEvent, getAdminBotRequest, getAgentById, getCompanyProfile, getWorkspaceSubscription, updateAgentBilling, updateBotRequest, updateBotRequestNumber, updateManagedBusinessSchedule, updateWhatsAppOnboarding, upsertAgent, upsertCompanyProfile, upsertPhoneNumber } from "@/lib/repository";
 import { plans } from "@/lib/pricing";
 import { requestPythonBuild } from "@/lib/python-bot";
 import type { Agent, BotRequestStatus } from "@/lib/types";
+import { configureOwnedVoiceNumber, configureWhatsAppWebhook, getWhatsAppSender, purchaseVoiceNumber, startWhatsAppSender, verifyWhatsAppSender } from "@/lib/twilio-admin";
 
 async function adminSession() {
   const session = await requireSession();
@@ -87,28 +88,137 @@ export async function updateRequestWorkflow(formData: FormData) {
 }
 
 export async function provisionClientNumbers(formData: FormData) {
-  await adminSession();
+  const session = await adminSession();
   const id = String(formData.get("id") ?? "");
   const routingPhone = String(formData.get("routingPhone") ?? "").replace(/[^\d+]/g, "");
   const request = await getAdminBotRequest(id);
   if (!request?.agentId) throw new Error("Build the bot before assigning numbers.");
   if (!/^\+\d{8,15}$/.test(routingPhone)) throw new Error("Enter a valid Twilio routing number.");
-  const sid = process.env.TWILIO_ACCOUNT_SID, token = process.env.TWILIO_AUTH_TOKEN;
-  if (!sid || !token) throw new Error("Twilio is not configured.");
-  const authorization = `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`;
-  const found = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(routingPhone)}`, { headers: { authorization } });
-  const data = await found.json();
-  const numberSid = data.incoming_phone_numbers?.[0]?.sid;
-  if (!numberSid) throw new Error("That number is not owned by this Twilio account.");
-  const voiceUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://vox-rust-six.vercel.app"}/api/voice/incoming`;
-  const configured = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/IncomingPhoneNumbers/${numberSid}.json`, {
-    method: "POST", headers: { authorization, "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ VoiceUrl: voiceUrl, VoiceMethod: "POST" }),
-  });
-  if (!configured.ok) throw new Error("Twilio rejected the webhook configuration.");
+  await configureOwnedVoiceNumber(routingPhone, `Vox · ${request.businessName}`);
   await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: routingPhone, channel: "voice", agentId: request.agentId }, request.workspaceId);
-  if (request.whatsappPhone) await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: request.whatsappPhone, channel: "whatsapp", agentId: request.agentId }, request.workspaceId);
+  await updateBotRequestNumber({ id, channel: "voice", number: routingPhone });
   const profile = await getCompanyProfile(request.workspaceId);
   if (profile) await upsertCompanyProfile({ ...profile, routingPhone, updatedAt: new Date().toISOString() });
+  await addAuditEvent(request.workspaceId, session.email, "twilio.voice_number_connected", { routingPhone });
+  revalidatePath(`/dashboard/admin/requests/${id}`);
+}
+
+export async function purchaseClientVoiceNumber(formData: FormData) {
+  const session = await adminSession();
+  const id = String(formData.get("id") ?? "");
+  const country = String(formData.get("country") ?? "US");
+  const areaCode = String(formData.get("areaCode") ?? "");
+  const request = await getAdminBotRequest(id);
+  if (!request?.agentId) throw new Error("Build the bot before purchasing a number.");
+  if (request.routingPhone) throw new Error("This bot already has a voice number assigned.");
+  const purchased = await purchaseVoiceNumber({
+    country,
+    areaCode,
+    friendlyName: `Vox · ${request.businessName}`,
+  });
+  const routingPhone = purchased.phone_number;
+  await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: routingPhone, channel: "voice", agentId: request.agentId }, request.workspaceId);
+  await updateBotRequestNumber({ id, channel: "voice", number: routingPhone });
+  const profile = await getCompanyProfile(request.workspaceId);
+  if (profile) await upsertCompanyProfile({ ...profile, routingPhone, updatedAt: new Date().toISOString() });
+  await addAuditEvent(request.workspaceId, session.email, "twilio.voice_number_purchased", { routingPhone, country });
+  revalidatePath(`/dashboard/admin/requests/${id}`);
+}
+
+async function activateWhatsAppRoute(id: string, senderSid: string, actorEmail: string) {
+  const request = await getAdminBotRequest(id);
+  if (!request?.agentId || !request.whatsappPhone) throw new Error("Build the bot and add its WhatsApp number first.");
+  const sender = await configureWhatsAppWebhook(senderSid);
+  const senderPhone = sender.sender_id.replace(/^whatsapp:/, "");
+  if (senderPhone !== request.whatsappPhone) {
+    throw new Error("That Twilio WhatsApp sender belongs to a different phone number.");
+  }
+  if (sender.status.toUpperCase() !== "ONLINE") {
+    await updateWhatsAppOnboarding({ id, senderSid, senderStatus: sender.status });
+    throw new Error(`WhatsApp sender is ${sender.status}. Wait for Meta/Twilio approval, then refresh its status.`);
+  }
+  await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: request.whatsappPhone, channel: "whatsapp", agentId: request.agentId }, request.workspaceId);
+  await updateBotRequestNumber({ id, channel: "whatsapp", number: request.whatsappPhone });
+  await updateWhatsAppOnboarding({ id, senderSid, senderStatus: sender.status });
+  const profile = await getCompanyProfile(request.workspaceId);
+  if (profile) await upsertCompanyProfile({ ...profile, whatsappPhone: request.whatsappPhone, updatedAt: new Date().toISOString() });
+  await addAuditEvent(request.workspaceId, actorEmail, "twilio.whatsapp_sender_connected", { senderSid, whatsappPhone: request.whatsappPhone });
+}
+
+export async function startClientWhatsAppOnboarding(formData: FormData) {
+  const session = await adminSession();
+  const id = String(formData.get("id") ?? "");
+  const wabaId = String(formData.get("wabaId") ?? "").trim();
+  const verificationMethod = String(formData.get("verificationMethod") ?? "sms") as "sms" | "voice";
+  const request = await getAdminBotRequest(id);
+  if (!request?.agentId || !request.whatsappPhone) throw new Error("Build the bot and provide the client's WhatsApp number first.");
+  if (!/^\d{5,30}$/.test(wabaId)) throw new Error("Enter the Meta WhatsApp Business Account ID.");
+  if (!(["sms", "voice"] as const).includes(verificationMethod)) throw new Error("Select SMS or voice verification.");
+  const sender = await startWhatsAppSender({
+    phoneNumber: request.whatsappPhone,
+    wabaId,
+    displayName: request.businessName,
+    verificationMethod,
+  });
+  await updateWhatsAppOnboarding({ id, senderSid: sender.sid, senderStatus: sender.status });
+  await addAuditEvent(request.workspaceId, session.email, "twilio.whatsapp_registration_started", { senderSid: sender.sid, status: sender.status });
+  revalidatePath(`/dashboard/admin/requests/${id}`);
+}
+
+export async function verifyClientWhatsAppSender(formData: FormData) {
+  const session = await adminSession();
+  const id = String(formData.get("id") ?? "");
+  const verificationCode = String(formData.get("verificationCode") ?? "").trim();
+  const request = await getAdminBotRequest(id);
+  if (!request?.whatsappSenderSid) throw new Error("Start WhatsApp registration first.");
+  const sender = await verifyWhatsAppSender(request.whatsappSenderSid, verificationCode);
+  await updateWhatsAppOnboarding({ id, senderSid: sender.sid, senderStatus: sender.status });
+  if (sender.status.toUpperCase() === "ONLINE") {
+    await activateWhatsAppRoute(id, sender.sid, session.email);
+  }
+  revalidatePath(`/dashboard/admin/requests/${id}`);
+}
+
+export async function refreshClientWhatsAppSender(formData: FormData) {
+  const session = await adminSession();
+  const id = String(formData.get("id") ?? "");
+  const enteredSid = String(formData.get("senderSid") ?? "").trim();
+  const request = await getAdminBotRequest(id);
+  const senderSid = enteredSid || request?.whatsappSenderSid;
+  if (!request || !senderSid) throw new Error("Enter or register a WhatsApp sender SID first.");
+  const sender = await getWhatsAppSender(senderSid);
+  await updateWhatsAppOnboarding({ id, senderSid: sender.sid, senderStatus: sender.status });
+  if (sender.status.toUpperCase() === "ONLINE") {
+    await activateWhatsAppRoute(id, sender.sid, session.email);
+  }
+  revalidatePath(`/dashboard/admin/requests/${id}`);
+}
+
+export async function updateClientBusinessSchedule(formData: FormData) {
+  const session = await adminSession();
+  const id = String(formData.get("id") ?? "");
+  const businessHours = String(formData.get("businessHours") ?? "").trim();
+  const timezone = String(formData.get("timezone") ?? "Africa/Harare").trim();
+  let businessSchedule: Array<{ day: string; enabled: boolean; opens: string; closes: string }> = [];
+  try { businessSchedule = JSON.parse(String(formData.get("businessSchedule") ?? "[]")); } catch {}
+  const request = await getAdminBotRequest(id);
+  if (!request) throw new Error("Bot request not found.");
+  try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch {
+    throw new Error("Select a valid business timezone.");
+  }
+  if (!businessHours || businessSchedule.length !== 7 || businessSchedule.some((entry) =>
+    typeof entry.day !== "string" || typeof entry.enabled !== "boolean" ||
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.opens) ||
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.closes) ||
+    (entry.enabled && entry.opens >= entry.closes)
+  )) throw new Error("Check the selected business days and times.");
+  await updateManagedBusinessSchedule({
+    requestId: id,
+    workspaceId: request.workspaceId,
+    businessHours,
+    timezone,
+    businessSchedule,
+  });
+  await addAuditEvent(request.workspaceId, session.email, "calendar.business_schedule_updated", { timezone, businessSchedule });
   revalidatePath(`/dashboard/admin/requests/${id}`);
 }

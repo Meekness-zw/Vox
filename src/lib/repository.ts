@@ -616,6 +616,9 @@ function rowToBotRequest(r: Record<string, unknown>): BotRequest {
     routingPhone: (r.routing_phone as string) || undefined,
     transferPhone: (r.transfer_phone as string) || undefined,
     whatsappPhone: (r.whatsapp_phone as string) || undefined,
+    whatsappSenderSid: (r.whatsapp_sender_sid as string) || undefined,
+    whatsappSenderStatus: (r.whatsapp_sender_status as string) || undefined,
+    timezone: (r.timezone as string) || "Africa/Harare",
     businessSchedule: (r.business_schedule as BotRequest["businessSchedule"]) ?? [],
     channels: (r.channels as string[]) ?? [],
     contactName: r.contact_name as string,
@@ -637,14 +640,15 @@ export async function createBotRequest(request: BotRequest): Promise<void> {
     insert into bot_requests (id, workspace_id, business_name, industry, description,
       services, business_hours, languages, tone, escalation, channels, contact_name,
       contact_email, status, admin_notes, agent_id, created_at, updated_at,
-      company_phone, routing_phone, transfer_phone, whatsapp_phone, business_schedule)
+      company_phone, routing_phone, transfer_phone, whatsapp_phone, timezone, business_schedule)
     values (${request.id}, ${request.workspaceId}, ${request.businessName}, ${request.industry},
       ${request.description}, ${request.services}, ${request.businessHours}, ${request.languages},
       ${request.tone}, ${request.escalation}, ${sql.json(request.channels)}, ${request.contactName},
       ${request.contactEmail}, ${request.status}, ${request.adminNotes}, ${request.agentId ?? null},
       ${request.createdAt}, ${request.updatedAt}, ${request.companyPhone ?? null},
       ${request.routingPhone ?? null}, ${request.transferPhone ?? null},
-      ${request.whatsappPhone ?? null}, ${sql.json(request.businessSchedule ?? [])})
+      ${request.whatsappPhone ?? null}, ${request.timezone ?? "Africa/Harare"},
+      ${sql.json(request.businessSchedule ?? [])})
   `;
 }
 
@@ -693,6 +697,61 @@ export async function updateBotRequest(input: {
       admin_notes = ${input.adminNotes ?? ""}, agent_id = ${input.agentId ?? null},
       updated_at = ${now} where id = ${input.id}
   `;
+}
+
+export async function updateWhatsAppOnboarding(input: {
+  id: string;
+  senderSid?: string;
+  senderStatus: string;
+}): Promise<void> {
+  const db = requireAdminDatabase();
+  await db`
+    update bot_requests set
+      whatsapp_sender_sid = coalesce(${input.senderSid ?? null}, whatsapp_sender_sid),
+      whatsapp_sender_status = ${input.senderStatus}, updated_at = now()
+    where id = ${input.id}
+  `;
+}
+
+export async function updateBotRequestNumber(input: {
+  id: string;
+  channel: "voice" | "whatsapp";
+  number: string;
+}): Promise<void> {
+  const db = requireAdminDatabase();
+  if (input.channel === "voice") {
+    await db`update bot_requests set routing_phone=${input.number}, updated_at=now() where id=${input.id}`;
+  } else {
+    await db`update bot_requests set whatsapp_phone=${input.number}, updated_at=now() where id=${input.id}`;
+  }
+}
+
+export async function updateManagedBusinessSchedule(input: {
+  requestId: string;
+  workspaceId: string;
+  businessHours: string;
+  timezone: string;
+  businessSchedule: NonNullable<BotRequest["businessSchedule"]>;
+}): Promise<void> {
+  const db = requireAdminDatabase();
+  await db.begin(async (transaction) => {
+    await transaction`
+      update bot_requests set business_hours=${input.businessHours},
+        timezone=${input.timezone}, business_schedule=${transaction.json(input.businessSchedule)},
+        updated_at=now() where id=${input.requestId} and workspace_id=${input.workspaceId}
+    `;
+    await transaction`
+      update company_profiles set business_hours=${input.businessHours},
+        timezone=${input.timezone}, business_schedule=${transaction.json(input.businessSchedule)},
+        updated_at=now() where workspace_id=${input.workspaceId}
+    `;
+    await transaction`
+      update agents set business_hours=${input.businessHours}
+      where workspace_id=${input.workspaceId} and id=(
+        select agent_id from bot_requests where id=${input.requestId}
+      )
+    `;
+  });
 }
 
 /* ---- platform admin: bot fleet & billing -------------------------------- */
@@ -836,18 +895,20 @@ export async function upsertCompanyProfile(profile: CompanyProfile): Promise<voi
   await sql`
     insert into company_profiles (workspace_id, business_name, industry, description, services,
       business_hours, languages, tone, escalation, updated_at, company_phone,
-      routing_phone, transfer_phone, whatsapp_phone, business_schedule)
+      routing_phone, transfer_phone, whatsapp_phone, timezone, business_schedule)
     values (${profile.workspaceId}, ${profile.businessName}, ${profile.industry}, ${profile.description},
       ${profile.services}, ${profile.businessHours}, ${profile.languages}, ${profile.tone},
       ${profile.escalation}, ${profile.updatedAt}, ${profile.companyPhone ?? null},
       ${profile.routingPhone ?? null}, ${profile.transferPhone ?? null},
-      ${profile.whatsappPhone ?? null}, ${sql.json(profile.businessSchedule ?? [])})
+      ${profile.whatsappPhone ?? null}, ${profile.timezone ?? "Africa/Harare"},
+      ${sql.json(profile.businessSchedule ?? [])})
     on conflict (workspace_id) do update set business_name = excluded.business_name,
       industry = excluded.industry, description = excluded.description, services = excluded.services,
       business_hours = excluded.business_hours, languages = excluded.languages, tone = excluded.tone,
       escalation = excluded.escalation, company_phone=excluded.company_phone,
       routing_phone=excluded.routing_phone, transfer_phone=excluded.transfer_phone,
-      whatsapp_phone=excluded.whatsapp_phone, business_schedule=excluded.business_schedule,
+      whatsapp_phone=excluded.whatsapp_phone, timezone=excluded.timezone,
+      business_schedule=excluded.business_schedule,
       updated_at = excluded.updated_at
   `;
 }
@@ -864,6 +925,7 @@ export async function getCompanyProfile(workspaceId: string): Promise<CompanyPro
     routingPhone: (r.routing_phone as string) || undefined,
     transferPhone: (r.transfer_phone as string) || undefined,
     whatsappPhone: (r.whatsapp_phone as string) || undefined,
+    timezone: (r.timezone as string) || "Africa/Harare",
     businessSchedule: (r.business_schedule as CompanyProfile["businessSchedule"]) ?? [],
     updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at) };
 }

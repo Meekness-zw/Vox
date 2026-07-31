@@ -24,6 +24,19 @@ export async function submitBotRequest(
   };
   let businessSchedule: BotRequest["businessSchedule"] = [];
   try { businessSchedule = JSON.parse(value("businessSchedule")); } catch {}
+  const timezone = value("timezone") || "Africa/Harare";
+  try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch {
+    return { error: "Please select a valid business timezone." };
+  }
+  if (!Array.isArray(businessSchedule) || businessSchedule.length !== 7 ||
+      businessSchedule.some((entry) =>
+        typeof entry.day !== "string" || typeof entry.enabled !== "boolean" ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.opens) ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.closes) ||
+        (entry.enabled && entry.opens >= entry.closes)
+      )) {
+    return { error: "Please check the selected business days and opening times." };
+  }
   if (!phone("companyPhone") || !phone("transferPhone") || !phone("whatsappPhone")) {
     return { error: "Please enter valid company, transfer, and WhatsApp numbers with country codes." };
   }
@@ -43,6 +56,7 @@ export async function submitBotRequest(
     companyPhone: phone("companyPhone"),
     transferPhone: phone("transferPhone"),
     whatsappPhone: phone("whatsappPhone"),
+    timezone,
     businessSchedule,
     channels: formData.getAll("channels").map(String),
     contactName: session.name,
@@ -66,6 +80,7 @@ export async function submitBotRequest(
     companyPhone: request.companyPhone,
     transferPhone: request.transferPhone,
     whatsappPhone: request.whatsappPhone,
+    timezone,
     businessSchedule,
     updatedAt: now,
   });
