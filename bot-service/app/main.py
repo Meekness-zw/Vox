@@ -80,7 +80,7 @@ class BuildResponse(BaseModel):
     knowledge: str
 
 
-app = FastAPI(title="Vox Bot Engine", version="1.0.0")
+app = FastAPI(title="Vox Bot Engine", version="1.1.0")
 http_client = httpx.AsyncClient(
     timeout=httpx.Timeout(12.0, connect=3.0),
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
@@ -304,7 +304,11 @@ def offline_reply(req: ReplyRequest) -> str:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "vox-python-bot-engine"}
+    return {
+        "status": "ok",
+        "service": "vox-python-bot-engine",
+        "voice_pipeline": "bilingual-v2",
+    }
 
 
 def stream_token_valid(params: dict[str, str]) -> bool:
