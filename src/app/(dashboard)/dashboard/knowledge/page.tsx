@@ -4,10 +4,7 @@ import {
   HelpCircle,
   Table,
   MessageCircleQuestion,
-  RefreshCw,
-  GitBranch,
-  Quote,
-  Gauge,
+  RefreshCw, DatabaseZap, LockKeyhole, SearchCheck, Trash2,
 } from "lucide-react";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +14,7 @@ import { AddKnowledge } from "@/components/dashboard/add-knowledge";
 import { listKnowledgeSources } from "@/lib/repository";
 import { getSession } from "@/lib/auth/session-cookies";
 import { timeAgo } from "@/lib/utils";
+import { removeKnowledgeSource } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -32,10 +30,9 @@ const typeIcon = {
 const statusVariant = { synced: "success", syncing: "warning", error: "danger" } as const;
 
 const features = [
-  { icon: RefreshCw, title: "Auto-sync", desc: "Re-crawls sources on a schedule" },
-  { icon: GitBranch, title: "Version control", desc: "Roll back to any prior version" },
-  { icon: Quote, title: "Source citations", desc: "Every answer links its source" },
-  { icon: Gauge, title: "Confidence scoring", desc: "Flags low-confidence replies" },
+  { icon: DatabaseZap, title: "Immediate indexing", desc: "Content is chunked and stored when you add it" },
+  { icon: SearchCheck, title: "Resilient search", desc: "Vector, full-text, and multilingual fallback retrieval" },
+  { icon: LockKeyhole, title: "Private by workspace", desc: "Every source and chunk stays tenant-scoped" },
 ];
 
 export default async function KnowledgePage() {
@@ -122,9 +119,12 @@ export default async function KnowledgePage() {
                         )}
                         {src.status}
                       </Badge>
-                      <Button variant="ghost" size="sm">
-                        Manage
-                      </Button>
+                      <form action={removeKnowledgeSource}>
+                        <input type="hidden" name="id" value={src.id} />
+                        <Button variant="ghost" size="sm" aria-label={`Delete ${src.name}`}>
+                          <Trash2 className="size-4" /> Delete
+                        </Button>
+                      </form>
                     </div>
                   );
                 })}

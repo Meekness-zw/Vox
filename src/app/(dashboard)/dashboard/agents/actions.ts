@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { upsertAgent, isDbEnabled } from "@/lib/repository";
-import { getSession } from "@/lib/auth/session-cookies";
+import { getSession, requireWorkspaceManager } from "@/lib/auth/session-cookies";
 import type { Agent } from "@/lib/types";
 import { isVoxAdmin } from "@/lib/admin";
 
@@ -10,7 +10,10 @@ export async function saveAgent(
   agent: Agent,
   targetWorkspaceId?: string
 ): Promise<{ ok: boolean; persisted: boolean }> {
-  const session = await getSession();
+  const initialSession = await getSession();
+  const session = initialSession && isVoxAdmin(initialSession.email)
+    ? initialSession
+    : await requireWorkspaceManager();
   if (!session) return { ok: false, persisted: false };
 
   const workspaceId = targetWorkspaceId && isVoxAdmin(session.email)

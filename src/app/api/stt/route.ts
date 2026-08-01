@@ -28,8 +28,8 @@ export async function POST(req: Request) {
     body,
   });
   if (!response.ok) {
-    const detail = await response.text();
-    return Response.json({ error: "Speech recognition failed.", detail }, { status: response.status });
+    await response.body?.cancel();
+    return Response.json({ error: "Speech recognition failed." }, { status: 502 });
   }
   const result = await response.json() as {
     text?: string;

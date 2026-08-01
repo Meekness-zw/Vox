@@ -1069,6 +1069,15 @@ export async function listKnowledgeSources(
   }));
 }
 
+export async function deleteKnowledgeSource(id: string, workspaceId: string): Promise<boolean> {
+  if (!sql) return false;
+  const rows = await sql.begin(async (tx) => {
+    await tx`delete from knowledge_chunks where source_id=${id} and workspace_id=${workspaceId}`;
+    return tx`delete from knowledge_sources where id=${id} and workspace_id=${workspaceId} returning id`;
+  });
+  return rows.length > 0;
+}
+
 /* ---- users & workspaces --------------------------------------------------- */
 
 export type DbUser = {

@@ -425,6 +425,42 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   alter table company_profiles add constraint company_profiles_workspace_fk foreign key (workspace_id) references workspaces(id) on delete cascade;
 exception when duplicate_object then null; end $$;
+do $$ declare table_name text; begin
+  foreach table_name in array array[
+    'sms_messages','knowledge_sources','knowledge_chunks','calendar_connections',
+    'voice_call_sessions','client_invoices','document_templates','business_documents',
+    'team_invitations','widget_configs','crm_connections','crm_deliveries','audit_events'
+  ] loop
+    begin
+      execute format(
+        'alter table %I add constraint %I foreign key (workspace_id) references workspaces(id) on delete cascade',
+        table_name, table_name || '_workspace_fk'
+      );
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
+do $$ begin
+  alter table agents add constraint agents_id_workspace_unique unique (id,workspace_id);
+exception when duplicate_object then null; end $$;
+do $$ declare table_name text; begin
+  foreach table_name in array array['conversations','phone_numbers','appointments','client_invoices','business_documents','bot_requests'] loop
+    begin
+      execute format(
+        'alter table %I add constraint %I foreign key (agent_id,workspace_id) references agents(id,workspace_id) on delete cascade',
+        table_name, table_name || '_agent_workspace_fk'
+      );
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
+do $$ begin
+  alter table knowledge_sources add constraint knowledge_sources_id_workspace_unique unique (id,workspace_id);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table knowledge_chunks add constraint knowledge_chunks_source_workspace_fk
+    foreign key (source_id,workspace_id) references knowledge_sources(id,workspace_id) on delete cascade;
+exception when duplicate_object then null; end $$;
 
 -- Supabase exposes tables in the public schema through its Data API. Vox uses
 -- a trusted server-side PostgreSQL connection and its own workspace checks, so

@@ -197,6 +197,11 @@ and WhatsApp sender onboarding are wired end-to-end.
 - **Number ownership** — a client's existing number must be ported to Twilio or
   forwarded to the Twilio number assigned to its bot. WhatsApp numbers go
   through Meta/Twilio verification before Vox can activate them.
+- **WhatsApp client onboarding** — Vox is an ISV when it registers senders for
+  other businesses. The first sender for each customer requires Meta Embedded
+  Signup, Twilio Tech Provider approval, and a customer Twilio subaccount. The
+  Senders API controls in the admin dashboard handle OTP and additional-sender
+  registration after that external onboarding is complete.
 - **Model-generated summaries** — `analyzeConversation` is heuristic; swap in a
   model pass (the seam is `src/lib/conversation.ts`) when the gateway is funded.
 - **PDF ingestion** — the knowledge base ingests URLs and text today; add a PDF

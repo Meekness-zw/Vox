@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { getSession } from "@/lib/auth/session-cookies";
-import { getCalendarConnection, getCrmConnection, getOrCreateWidgetConfig, listAgents, listAuditEvents, listTeamInvitations, listWorkspaceUsers } from "@/lib/repository";
+import { getCalendarConnection, getCrmConnection, getOrCreateWidgetConfig, getWorkspaceSendingNumber, listAgents, listAuditEvents, listTeamInvitations, listWorkspaceUsers } from "@/lib/repository";
 import { hasCalendarCredentials } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -38,8 +38,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const calendarConnected = hasCalendarCredentials()
     ? Boolean(await getCalendarConnection(workspaceId))
     : false;
-  const voiceConfigured = Boolean(process.env.TWILIO_ACCOUNT_SID);
-  const whatsappConfigured = Boolean(process.env.TWILIO_WHATSAPP_NUMBER);
+  const twilioConfigured = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+  const [voiceNumber, whatsappNumber] = await Promise.all([
+    getWorkspaceSendingNumber(workspaceId, "voice"),
+    getWorkspaceSendingNumber(workspaceId, "whatsapp"),
+  ]);
+  const voiceConfigured = twilioConfigured && Boolean(voiceNumber);
+  const whatsappConfigured = twilioConfigured && Boolean(whatsappNumber);
 
   return (
     <>
@@ -128,7 +133,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 </div>
                 {calendarConnected ? (
                   <Badge variant="success">
-                    <Check className="size-3" /> Connected
+                    <Check className="size-3" /> {voiceNumber}
                   </Badge>
                 ) : (
                   <a
@@ -148,7 +153,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 </div>
                 {voiceConfigured ? (
                   <Badge variant="success">
-                    <Check className="size-3" /> Connected
+                    <Check className="size-3" /> {whatsappNumber}
                   </Badge>
                 ) : (
                   <span className="text-xs text-muted-foreground">Set TWILIO_ACCOUNT_SID</span>

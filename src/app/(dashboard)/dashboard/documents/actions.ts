@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireSession } from "@/lib/auth/session-cookies";
+import { requireSession, requireWorkspaceManager } from "@/lib/auth/session-cookies";
 import {
   createBusinessDocument,
   defaultDocumentTemplate,
@@ -86,7 +86,7 @@ export async function saveDocumentTemplateAction(
   _previous: DocumentActionState,
   formData: FormData
 ): Promise<DocumentActionState> {
-  const session = await requireSession();
+  const session = await requireWorkspaceManager();
   const current =
     (await getDocumentTemplate(session.workspaceId)) ??
     defaultDocumentTemplate(await getWorkspaceName(session.workspaceId));

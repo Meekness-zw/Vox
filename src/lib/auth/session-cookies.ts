@@ -25,6 +25,17 @@ export async function requireSession(): Promise<SessionPayload> {
   return session;
 }
 
+/** Require a workspace role allowed to change bot and integration settings. */
+export async function requireWorkspaceManager(): Promise<SessionPayload> {
+  const session = await requireSession();
+  if (!isDbEnabled) return session;
+  const user = await findActiveUserBySession(session.userId, session.workspaceId);
+  if (!user || !["Owner", "Admin"].includes(user.role)) {
+    throw new Error("Owner or Admin access required");
+  }
+  return session;
+}
+
 export async function setSessionCookie(token: string) {
   const store = await cookies();
   store.set(SESSION_COOKIE, token, {

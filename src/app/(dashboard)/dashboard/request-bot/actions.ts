@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { requireSession } from "@/lib/auth/session-cookies";
+import { requireWorkspaceManager } from "@/lib/auth/session-cookies";
 import { createBotRequestWithCompanyProfile, getWorkspaceSubscription } from "@/lib/repository";
 import type { BotRequest } from "@/lib/types";
 import { isValidBusinessSchedule, isValidTimezone } from "@/lib/business-schedule";
@@ -12,7 +12,7 @@ export async function submitBotRequest(
   _state: RequestState,
   formData: FormData
 ): Promise<RequestState> {
-  const session = await requireSession();
+  const session = await requireWorkspaceManager();
   const value = (name: string) => String(formData.get(name) ?? "").trim();
   const required = ["businessName", "industry", "description", "services", "businessHours"];
   if (required.some((name) => !value(name))) {
