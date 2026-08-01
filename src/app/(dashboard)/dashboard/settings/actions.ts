@@ -93,7 +93,7 @@ export async function manageTeamMember(formData: FormData) {
   const intent = String(formData.get("intent") ?? "role");
   if (userId === session.userId) throw new Error("You cannot deactivate your own account.");
   if (intent === "deactivate") {
-    await updateWorkspaceUser({ workspaceId: session.workspaceId, userId, status: "disabled" });
+    await updateWorkspaceUser({ workspaceId: session.workspaceId, userId, status: "suspended" });
     await addAuditEvent(session.workspaceId, session.email, "team.member_deactivated", { userId });
   } else {
     const role = String(formData.get("role") ?? "Agent");

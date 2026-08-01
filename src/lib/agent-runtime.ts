@@ -124,10 +124,19 @@ export async function generateReply(
   return "I couldn't complete that action safely. I'll arrange for a team member to follow up.";
 }
 
-function textArg(args: Record<string, unknown>, key: string, required = false) {
+function textArg(args: Record<string, unknown>, key: string, required = false, maximum = 2_000) {
   const value = typeof args[key] === "string" ? args[key].trim() : "";
   if (required && !value) throw new Error(`${key} is required`);
+  if (value.length > maximum) throw new Error(`${key} is too long`);
   return value || undefined;
+}
+
+function boundedNumber(value: unknown, fallback: number, minimum: number, maximum: number) {
+  const number = value === undefined || value === null || value === "" ? fallback : Number(value);
+  if (!Number.isFinite(number) || number < minimum || number > maximum) {
+    throw new Error(`Number must be between ${minimum} and ${maximum}`);
+  }
+  return number;
 }
 
 function formatSlotLabel(iso: string, timezone: string) {
@@ -146,16 +155,12 @@ function lineItemsArg(args: Record<string, unknown>) {
   if (!Array.isArray(args.lineItems) || !args.lineItems.length) {
     throw new Error("At least one line item is required");
   }
+  if (args.lineItems.length > 100) throw new Error("A document can contain at most 100 line items");
   return args.lineItems.map((raw) => {
     const item = raw as Record<string, unknown>;
-    const description = textArg(item, "description", true)!;
-    const quantity = Number(item.quantity ?? 1);
-    const unitPriceCents = Number(item.unitPriceCents);
-    if (!Number.isFinite(quantity) || !Number.isFinite(unitPriceCents) ||
-        !(quantity > 0) || quantity > 1_000_000 ||
-        !(unitPriceCents >= 0) || unitPriceCents > 100_000_000_00) {
-      throw new Error("Invalid line item quantity or price");
-    }
+    const description = textArg(item, "description", true, 1_000)!;
+    const quantity = boundedNumber(item.quantity, 1, 0.01, 1_000_000);
+    const unitPriceCents = boundedNumber(item.unitPriceCents, 0, 0, 10_000_000_000);
     return {
       description,
       quantity,
@@ -174,7 +179,7 @@ async function executePythonAction(action: PythonBotAction, ctx: ToolContext) {
       const result = await getAvailability(
         ctx.workspaceId,
         date,
-        Math.max(10, Number(args.serviceMinutes ?? 30))
+        boundedNumber(args.serviceMinutes, 30, 10, 480)
       );
       return {
         timezone: result.timezone,
@@ -194,7 +199,7 @@ async function executePythonAction(action: PythonBotAction, ctx: ToolContext) {
         contactEmail: textArg(args, "contactEmail") ?? ctx.contactEmail,
         service: textArg(args, "service", true)!,
         startsAt: textArg(args, "startsAt", true)!,
-        durationMinutes: Math.max(10, Number(args.durationMinutes ?? 30)),
+        durationMinutes: boundedNumber(args.durationMinutes, 30, 10, 480),
       });
       return {
         appointmentId: appointment.id,
@@ -236,7 +241,7 @@ async function executePythonAction(action: PythonBotAction, ctx: ToolContext) {
       contactPhone: textArg(args, "contactPhone") ?? ctx.contactPhone,
       contactAddress: textArg(args, "contactAddress"),
       lineItems: lineItemsArg(args),
-      taxRatePercent: Math.min(100, Math.max(0, Number(args.taxRatePercent ?? 0))),
+      taxRatePercent: boundedNumber(args.taxRatePercent, 0, 0, 100),
       notes: textArg(args, "notes"),
       dueDate: textArg(args, "dueDate"),
       metadata: {

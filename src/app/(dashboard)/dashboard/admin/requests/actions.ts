@@ -104,7 +104,10 @@ export async function provisionClientNumbers(formData: FormData) {
   const request = await getAdminBotRequest(id);
   if (!request?.agentId) throw new Error("Build the bot before assigning numbers.");
   if (!/^\+\d{8,15}$/.test(routingPhone)) throw new Error("Enter a valid Twilio routing number.");
-  await configureOwnedVoiceNumber(routingPhone, `Vox · ${request.businessName}`);
+  const owned = await configureOwnedVoiceNumber(routingPhone, `Vox · ${request.businessName}`);
+  if (request.channels.includes("SMS") && owned.capabilities?.sms === false) {
+    throw new Error("This Twilio number cannot send SMS. Choose an SMS-capable number for this bot.");
+  }
   await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: routingPhone, channel: "voice", agentId: request.agentId }, request.workspaceId);
   await updateBotRequestNumber({ id, channel: "voice", number: routingPhone });
   const profile = await getCompanyProfile(request.workspaceId);
@@ -125,6 +128,7 @@ export async function purchaseClientVoiceNumber(formData: FormData) {
     country,
     areaCode,
     friendlyName: `Vox · ${request.businessName}`,
+    smsEnabled: request.channels.includes("SMS"),
   });
   const routingPhone = purchased.phone_number;
   try {

@@ -698,6 +698,54 @@ export async function createBotRequest(request: BotRequest): Promise<void> {
   `;
 }
 
+/** Save a client's request and canonical company profile as one unit. */
+export async function createBotRequestWithCompanyProfile(
+  request: BotRequest,
+  profile: CompanyProfile
+): Promise<void> {
+  if (request.workspaceId !== profile.workspaceId) {
+    throw new Error("Bot request and company profile must belong to the same workspace.");
+  }
+  if (!sql) {
+    demoBotRequests.unshift(request);
+    return;
+  }
+  await sql.begin(async (tx) => {
+    await tx`
+      insert into bot_requests (id, workspace_id, business_name, industry, description,
+        services, business_hours, languages, tone, escalation, channels, contact_name,
+        contact_email, status, admin_notes, agent_id, created_at, updated_at,
+        company_phone, routing_phone, transfer_phone, whatsapp_phone, timezone, business_schedule)
+      values (${request.id}, ${request.workspaceId}, ${request.businessName}, ${request.industry},
+        ${request.description}, ${request.services}, ${request.businessHours}, ${request.languages},
+        ${request.tone}, ${request.escalation}, ${tx.json(request.channels)}, ${request.contactName},
+        ${request.contactEmail}, ${request.status}, ${request.adminNotes}, ${request.agentId ?? null},
+        ${request.createdAt}, ${request.updatedAt}, ${request.companyPhone ?? null},
+        ${request.routingPhone ?? null}, ${request.transferPhone ?? null},
+        ${request.whatsappPhone ?? null}, ${request.timezone ?? "Africa/Harare"},
+        ${tx.json(request.businessSchedule ?? [])})
+    `;
+    await tx`
+      insert into company_profiles (workspace_id, business_name, industry, description, services,
+        business_hours, languages, tone, escalation, updated_at, company_phone,
+        routing_phone, transfer_phone, whatsapp_phone, timezone, business_schedule)
+      values (${profile.workspaceId}, ${profile.businessName}, ${profile.industry}, ${profile.description},
+        ${profile.services}, ${profile.businessHours}, ${profile.languages}, ${profile.tone},
+        ${profile.escalation}, ${profile.updatedAt}, ${profile.companyPhone ?? null},
+        ${profile.routingPhone ?? null}, ${profile.transferPhone ?? null},
+        ${profile.whatsappPhone ?? null}, ${profile.timezone ?? "Africa/Harare"},
+        ${tx.json(profile.businessSchedule ?? [])})
+      on conflict (workspace_id) do update set business_name=excluded.business_name,
+        industry=excluded.industry, description=excluded.description, services=excluded.services,
+        business_hours=excluded.business_hours, languages=excluded.languages, tone=excluded.tone,
+        escalation=excluded.escalation, company_phone=excluded.company_phone,
+        routing_phone=excluded.routing_phone, transfer_phone=excluded.transfer_phone,
+        whatsapp_phone=excluded.whatsapp_phone, timezone=excluded.timezone,
+        business_schedule=excluded.business_schedule, updated_at=excluded.updated_at
+    `;
+  });
+}
+
 export async function listBotRequests(workspaceId?: string): Promise<BotRequest[]> {
   if (!sql) return workspaceId ? demoBotRequests.filter((r) => r.workspaceId === workspaceId) : demoBotRequests;
   const rows = workspaceId

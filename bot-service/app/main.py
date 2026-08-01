@@ -372,6 +372,7 @@ async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "service": "vox-python-bot-engine",
+        "version": app.version,
         "voice_pipeline": "bilingual-v2",
     }
 
@@ -496,28 +497,58 @@ async def speak_to_twilio(
 ) -> None:
     key = os.getenv("ELEVENLABS_API_KEY", "").strip()
     voice_id = voice_id.strip() or os.getenv("ELEVENLABS_MICHEAL_VOICE_ID", "").strip() or "YPtbPhafrxFTDAeaPP4w"
-    if not key or not text:
+    if not text:
         return
-    url = (
-        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
-        "?output_format=ulaw_8000&optimize_streaming_latency=3"
-    )
-    async with http_client.stream(
-        "POST", url,
-        headers={"xi-api-key": key, "content-type": "application/json"},
+    if key:
+        try:
+            url = (
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+                "?output_format=ulaw_8000&optimize_streaming_latency=3"
+            )
+            async with http_client.stream(
+                "POST", url,
+                headers={"xi-api-key": key, "content-type": "application/json"},
+                json={
+                    "text": text,
+                    "model_id": os.getenv("ELEVENLABS_CALL_MODEL", "eleven_flash_v2_5"),
+                    "voice_settings": {"stability": 0.42, "similarity_boost": 0.78, "speed": 1.08},
+                },
+            ) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes(3200):
+                    if chunk:
+                        await websocket.send_json({
+                            "event": "media", "streamSid": stream_sid,
+                            "media": {"payload": base64.b64encode(chunk).decode()},
+                        })
+            return
+        except httpx.HTTPError:
+            pass
+
+    # Keep the call audible if ElevenLabs has a temporary outage or exhausts
+    # its quota. OpenAI PCM is resampled to Twilio's 8 kHz mu-law stream.
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not openai_key:
+        return
+    response = await http_client.post(
+        "https://api.openai.com/v1/audio/speech",
+        headers={"Authorization": f"Bearer {openai_key}"},
         json={
-            "text": text,
-            "model_id": os.getenv("ELEVENLABS_CALL_MODEL", "eleven_flash_v2_5"),
-            "voice_settings": {"stability": 0.42, "similarity_boost": 0.78, "speed": 1.08},
+            "model": os.getenv("VOX_OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
+            "voice": os.getenv("VOX_OPENAI_TTS_VOICE", "cedar"),
+            "input": text,
+            "response_format": "pcm",
+            "speed": 1.08,
         },
-    ) as response:
-        response.raise_for_status()
-        async for chunk in response.aiter_bytes(3200):
-            if chunk:
-                await websocket.send_json({
-                    "event": "media", "streamSid": stream_sid,
-                    "media": {"payload": base64.b64encode(chunk).decode()},
-                })
+    )
+    response.raise_for_status()
+    pcm_8khz, _ = audioop.ratecv(response.content, 2, 1, 24000, 8000, None)
+    mulaw = audioop.lin2ulaw(pcm_8khz, 2)
+    for offset in range(0, len(mulaw), 3200):
+        await websocket.send_json({
+            "event": "media", "streamSid": stream_sid,
+            "media": {"payload": base64.b64encode(mulaw[offset:offset + 3200]).decode()},
+        })
 
 
 async def streamed_bot_reply(
@@ -584,7 +615,7 @@ async def twilio_media(websocket: WebSocket) -> None:
             playback_task.add_done_callback(
                 lambda task: None if task.cancelled() else task.exception()
             )
-        except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError):
+        except (httpx.HTTPError, KeyError, ValueError, RuntimeError, json.JSONDecodeError):
             apology = (
                 "Pamusoroi, pane dambudziko. Ndapota edzai zvakare."
                 if language_mode == "shona" else

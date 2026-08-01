@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/session-cookies";
-import { createBotRequest, getWorkspaceSubscription, upsertCompanyProfile } from "@/lib/repository";
+import { createBotRequestWithCompanyProfile, getWorkspaceSubscription } from "@/lib/repository";
 import type { BotRequest } from "@/lib/types";
 import { isValidBusinessSchedule, isValidTimezone } from "@/lib/business-schedule";
 
@@ -67,8 +67,7 @@ export async function submitBotRequest(
     createdAt: now,
     updatedAt: now,
   };
-  await createBotRequest(request);
-  await upsertCompanyProfile({
+  await createBotRequestWithCompanyProfile(request, {
     workspaceId: session.workspaceId,
     businessName: request.businessName,
     industry: request.industry,

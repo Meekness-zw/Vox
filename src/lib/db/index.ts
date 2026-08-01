@@ -377,6 +377,55 @@ create table if not exists webhook_events (
 );
 create index if not exists webhook_events_claimed_idx on webhook_events (claimed_at);
 
+-- Enforce the invariants relied on by authentication, tenant routing, and the
+-- admin workflow at the database boundary as well as in application code.
+do $$ begin
+  alter table users add constraint users_status_check check (status in ('active','suspended'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table users add constraint users_role_check check (role in ('Owner','Admin','Agent'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table agents add constraint agents_type_check check (type in ('voice','chat'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table agents add constraint agents_status_check check (status in ('active','draft','paused'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table phone_numbers add constraint phone_numbers_channel_check check (channel in ('voice','whatsapp'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table appointments add constraint appointments_status_check check (status in ('confirmed','cancelled','completed','no_show'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table bot_requests add constraint bot_requests_status_check check (status in ('payment_required','submitted','under_review','building','testing','changes_requested','approved','live'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table workspaces add constraint workspaces_subscription_status_check check (subscription_status in ('free','active','past_due','cancelled'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table users add constraint users_workspace_fk foreign key (workspace_id) references workspaces(id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table agents add constraint agents_workspace_fk foreign key (workspace_id) references workspaces(id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversations add constraint conversations_workspace_fk foreign key (workspace_id) references workspaces(id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table phone_numbers add constraint phone_numbers_workspace_fk foreign key (workspace_id) references workspaces(id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table appointments add constraint appointments_workspace_fk foreign key (workspace_id) references workspaces(id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table bot_requests add constraint bot_requests_workspace_fk foreign key (workspace_id) references workspaces(id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table company_profiles add constraint company_profiles_workspace_fk foreign key (workspace_id) references workspaces(id) on delete cascade;
+exception when duplicate_object then null; end $$;
+
 -- Supabase exposes tables in the public schema through its Data API. Vox uses
 -- a trusted server-side PostgreSQL connection and its own workspace checks, so
 -- RLS is enabled without public policies: anon/authenticated Data API callers

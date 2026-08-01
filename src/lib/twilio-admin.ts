@@ -1,6 +1,7 @@
 type TwilioVoiceNumber = {
   sid: string;
   phone_number: string;
+  capabilities?: { voice?: boolean; sms?: boolean; mms?: boolean };
 };
 
 export type WhatsAppSender = {
@@ -71,11 +72,13 @@ export async function purchaseVoiceNumber(input: {
   country: string;
   areaCode?: string;
   friendlyName: string;
+  smsEnabled?: boolean;
 }) {
   const { accountSid } = credentials();
   const country = input.country.toUpperCase();
   if (!/^[A-Z]{2}$/.test(country)) throw new Error("Select a valid country.");
   const query = new URLSearchParams({ VoiceEnabled: "true", Limit: "1" });
+  if (input.smsEnabled) query.set("SmsEnabled", "true");
   if (input.areaCode?.trim()) query.set("AreaCode", input.areaCode.replace(/\D/g, ""));
   const available = await twilioJson<{ available_phone_numbers?: TwilioVoiceNumber[] }>(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/AvailablePhoneNumbers/${country}/Local.json?${query}`

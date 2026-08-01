@@ -10,7 +10,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types scripts/test-core.mjs && PYTHONPATH=bot-service bot-service/.venv/bin/python -m unittest discover -s bot-service/tests -v"
+    "test": "node --experimental-strip-types scripts/test-core.mjs && PYTHONPATH=bot-service bot-service/.venv/bin/python -m unittest discover -s bot-service/tests -v",
+    "test:database": "node --env-file=.env --experimental-strip-types scripts/test-database.mjs",
+    "test:deployments": "node --env-file=.env scripts/test-deployments.mjs"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.196",

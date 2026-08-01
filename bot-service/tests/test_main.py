@@ -35,8 +35,17 @@ def request(language: str = "English + Shona", content: str = "hello") -> ReplyR
 class BotEngineTests(unittest.TestCase):
     def test_health_and_host_validation(self) -> None:
         client = TestClient(app)
-        self.assertEqual(client.get("/health").status_code, 200)
+        health = client.get("/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json()["version"], "1.1.0")
+        self.assertEqual(health.json()["voice_pipeline"], "bilingual-v2")
         self.assertEqual(client.get("/health", headers={"host": "bad/host"}).status_code, 400)
+        oversized = client.post(
+            "/v1/reply",
+            content=b"{}",
+            headers={"content-length": "2000001"},
+        )
+        self.assertEqual(oversized.status_code, 413)
 
     def test_language_locks_and_explicit_switches(self) -> None:
         self.assertEqual(choose_call_language("Makadii henyu", "auto"), "shona")

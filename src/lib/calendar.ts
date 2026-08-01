@@ -318,7 +318,16 @@ export async function cancelAppointment(id: string, workspaceId: string): Promis
     const conn = await getClientForWorkspace(workspaceId);
     if (conn) {
       const calendar = google.calendar({ version: "v3", auth: conn.client });
-      await calendar.events.delete({ calendarId: conn.calendarId, eventId: appointment.googleEventId }).catch(() => {});
+      try {
+        await calendar.events.delete({ calendarId: conn.calendarId, eventId: appointment.googleEventId });
+      } catch (error) {
+        const status = (error as { code?: number; response?: { status?: number } }).response?.status ??
+          (error as { code?: number }).code;
+        // A missing Google event is already effectively cancelled. For network
+        // or permission failures, keep the Vox record confirmed so the UI does
+        // not falsely report a cancellation that never reached the calendar.
+        if (status !== 404 && status !== 410) throw error;
+      }
     }
   }
   await cancelAppointmentRow(id, workspaceId);
