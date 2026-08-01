@@ -1,6 +1,5 @@
 import { requireSession } from "@/lib/auth/session-cookies";
 import { renderBusinessDocumentPdf, resolveDocumentTemplate } from "@/lib/business-documents";
-import { initSchema } from "@/lib/db";
 import { getBusinessDocumentById } from "@/lib/repository";
 
 export async function GET(
@@ -8,7 +7,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await requireSession();
-  await initSchema();
   const { id } = await params;
   const item = await getBusinessDocumentById(id, session.workspaceId);
   if (!item) return new Response("Not found", { status: 404 });

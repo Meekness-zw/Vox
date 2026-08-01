@@ -5,7 +5,7 @@ import {
   getAppointmentById,
   getCalendarConnection,
   getCompanyProfile,
-  insertAppointment,
+  insertAppointmentIfAvailable,
   listAppointmentsInRange,
   upsertCalendarConnection,
 } from "@/lib/repository";
@@ -221,14 +221,15 @@ export async function getAvailability(
       });
     const calBusy = fb.data.calendars?.[conn.calendarId]?.busy ?? [];
     for (const b of calBusy) busy.push({ start: new Date(b.start), end: new Date(b.end) });
-  } else {
-    const existing = await listAppointmentsInRange(
-      workspaceId,
-      dayStart.toISOString(),
-      dayEnd.toISOString()
-    );
-    for (const a of existing) busy.push({ start: new Date(a.startsAt), end: new Date(a.endsAt) });
   }
+  // Always include Vox's records too. This covers events awaiting Calendar
+  // propagation and appointments created while Calendar was disconnected.
+  const existing = await listAppointmentsInRange(
+    workspaceId,
+    dayStart.toISOString(),
+    dayEnd.toISOString()
+  );
+  for (const a of existing) busy.push({ start: new Date(a.startsAt), end: new Date(a.endsAt) });
 
   const slots: string[] = [];
   const stepMs = durationMinutes * 60 * 1000;
@@ -283,7 +284,7 @@ export async function bookAppointment(opts: {
   }
 
   const appointment: Appointment = {
-    id: "ap_" + Math.random().toString(36).slice(2, 10),
+    id: "ap_" + crypto.randomUUID(),
     agentId: opts.agentId,
     conversationId: opts.conversationId,
     contactName: opts.contactName,
@@ -297,7 +298,17 @@ export async function bookAppointment(opts: {
     createdAt: new Date().toISOString(),
   };
 
-  await insertAppointment(appointment, opts.workspaceId);
+  try {
+    await insertAppointmentIfAvailable(appointment, opts.workspaceId);
+  } catch (error) {
+    // If another request won the atomic reservation after we created the
+    // Google event, remove our orphan before reporting the slot conflict.
+    if (googleEventId && conn) {
+      const calendar = google.calendar({ version: "v3", auth: conn.client });
+      await calendar.events.delete({ calendarId: conn.calendarId, eventId: googleEventId }).catch(() => {});
+    }
+    throw error;
+  }
   return appointment;
 }
 

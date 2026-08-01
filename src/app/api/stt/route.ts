@@ -1,7 +1,10 @@
 export const maxDuration = 30;
+import { allowRequest, bodyTooLarge } from "@/lib/api-security";
 
 /** Multilingual speech recognition using ElevenLabs Scribe v2. */
 export async function POST(req: Request) {
+  if (bodyTooLarge(req, 12_000_000)) return Response.json({ error: "Audio is too large." }, { status: 413 });
+  if (!(await allowRequest(req, "stt", 20))) return Response.json({ error: "Too many requests." }, { status: 429 });
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
     return Response.json({ error: "ElevenLabs speech recognition is not configured." }, { status: 501 });
@@ -11,6 +14,7 @@ export async function POST(req: Request) {
   if (!(audio instanceof Blob) || audio.size === 0) {
     return Response.json({ error: "No audio recording supplied." }, { status: 400 });
   }
+  if (audio.size > 12_000_000) return Response.json({ error: "Audio is too large." }, { status: 413 });
   const body = new FormData();
   body.set("file", audio, "customer-speech.webm");
   body.set("model_id", "scribe_v2");

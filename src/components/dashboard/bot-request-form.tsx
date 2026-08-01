@@ -39,7 +39,7 @@ export function BotRequestForm() {
           ))}
         </div>
       </fieldset>
-      {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+      {state.error && <p className="text-sm text-danger">{state.error}</p>}
       <Button type="submit" disabled={pending}>
         {pending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
         Send to Vox for review

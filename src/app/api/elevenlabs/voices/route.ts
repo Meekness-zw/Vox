@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { getSession } from "@/lib/auth/session-cookies";
 
 type ElevenLabsVoice = {
   voice_id: string;
@@ -10,6 +11,9 @@ type ElevenLabsVoice = {
 
 /** Lists the voices accessible to the server's ElevenLabs account. */
 export async function GET() {
+  if (!(await getSession())) {
+    return Response.json({ error: "Not authenticated" }, { status: 401 });
+  }
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
     return Response.json({ voices: [], configured: false });

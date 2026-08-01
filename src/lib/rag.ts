@@ -2,6 +2,7 @@ import { embed, embedMany } from "ai";
 import { sql } from "@/lib/db";
 import { hasModelCredentials } from "@/lib/agent-runtime";
 import type { KnowledgeSource } from "@/lib/types";
+import { assertPublicUrl } from "@/lib/public-url";
 
 const EMBED_MODEL = process.env.VOX_EMBED_MODEL ?? "openai/text-embedding-3-small";
 const EMBED_DIMS = 1536;
@@ -57,9 +58,29 @@ export function chunkText(text: string, target = 800): string[] {
 
 /* ---- ingestion ------------------------------------------------------------ */
 
-export async function fetchUrlText(url: string): Promise<string> {
-  const res = await fetch(url, { headers: { "User-Agent": "VoxBot/1.0" } });
+export async function fetchUrlText(rawUrl: string): Promise<string> {
+  let url = await assertPublicUrl(rawUrl);
+  let res: Response | undefined;
+  for (let redirects = 0; redirects <= 3; redirects += 1) {
+    res = await fetch(url, {
+      headers: { "User-Agent": "VoxBot/1.0" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (![301, 302, 303, 307, 308].includes(res.status)) break;
+    const location = res.headers.get("location");
+    if (!location || redirects === 3) throw new Error("The website redirected too many times.");
+    url = await assertPublicUrl(new URL(location, url).toString());
+  }
+  if (!res?.ok) throw new Error(`The website returned HTTP ${res?.status ?? "error"}.`);
+  const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+    throw new Error("The URL must point to an HTML or plain-text page.");
+  }
+  const declaredLength = Number(res.headers.get("content-length") ?? 0);
+  if (declaredLength > 2_000_000) throw new Error("The website is too large to import (2 MB maximum).");
   const html = await res.text();
+  if (html.length > 2_000_000) throw new Error("The website is too large to import (2 MB maximum).");
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -88,37 +109,36 @@ export async function ingestSource(input: IngestInput): Promise<{
   const text =
     input.type === "URL" ? await fetchUrlText(input.content) : input.content;
   const chunks = chunkText(text);
-  const sourceId = "kb_" + Math.random().toString(36).slice(2, 10);
-
-  await sql`
-    insert into knowledge_sources (id, workspace_id, name, type, status, chunks)
-    values (${sourceId}, ${input.workspaceId}, ${input.name}, ${input.type}, 'syncing', 0)
-  `;
-
+  if (!chunks.length) throw new Error("The knowledge source does not contain readable text.");
+  const sourceId = "kb_" + crypto.randomUUID();
   const embeddings = await embedAll(chunks);
   let embedded = false;
-
-  for (let i = 0; i < chunks.length; i++) {
-    const id = `${sourceId}_${i}`;
-    const e = embeddings[i];
-    if (e && e.length === EMBED_DIMS) {
-      embedded = true;
-      await sql`
-        insert into knowledge_chunks (id, source_id, workspace_id, content, embedding)
-        values (${id}, ${sourceId}, ${input.workspaceId}, ${chunks[i]}, ${toVector(e)}::vector)
-      `;
-    } else {
-      await sql`
-        insert into knowledge_chunks (id, source_id, workspace_id, content)
-        values (${id}, ${sourceId}, ${input.workspaceId}, ${chunks[i]})
-      `;
+  await sql.begin(async (tx) => {
+    await tx`
+      insert into knowledge_sources (id, workspace_id, name, type, status, chunks)
+      values (${sourceId}, ${input.workspaceId}, ${input.name}, ${input.type}, 'syncing', 0)
+    `;
+    for (let i = 0; i < chunks.length; i++) {
+      const id = `${sourceId}_${i}`;
+      const e = embeddings[i];
+      if (e && e.length === EMBED_DIMS) {
+        embedded = true;
+        await tx`
+          insert into knowledge_chunks (id, source_id, workspace_id, content, embedding)
+          values (${id}, ${sourceId}, ${input.workspaceId}, ${chunks[i]}, ${toVector(e)}::vector)
+        `;
+      } else {
+        await tx`
+          insert into knowledge_chunks (id, source_id, workspace_id, content)
+          values (${id}, ${sourceId}, ${input.workspaceId}, ${chunks[i]})
+        `;
+      }
     }
-  }
-
-  await sql`
-    update knowledge_sources set chunks = ${chunks.length}, status = 'synced',
-      updated_at = now() where id = ${sourceId}
-  `;
+    await tx`
+      update knowledge_sources set chunks = ${chunks.length}, status = 'synced',
+        updated_at = now() where id = ${sourceId}
+    `;
+  });
 
   return { sourceId, chunks: chunks.length, embedded };
 }
@@ -166,6 +186,27 @@ export async function retrieveContext(
         where c.workspace_id = ${workspaceId}
           and c.tsv @@ to_tsquery('english', ${orQuery})
         order by rank desc
+        limit ${k}
+      `;
+    }
+  }
+
+  // English stemming is weak for Shona and mixed-language searches. A final
+  // tenant-scoped trigram-like fallback keeps proper nouns and Shona words
+  // discoverable even when embeddings are temporarily unavailable.
+  if (!rows.length) {
+    const terms = (query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
+      .filter((term) => term.length > 2)
+      .slice(0, 8);
+    if (terms.length) {
+      const patterns = terms.map((term) => `%${term}%`);
+      rows = await sql`
+        select c.content, s.name as source
+        from knowledge_chunks c
+        join knowledge_sources s on s.id = c.source_id
+        where c.workspace_id = ${workspaceId}
+          and lower(c.content) like any(${patterns})
+        order by c.created_at desc
         limit ${k}
       `;
     }

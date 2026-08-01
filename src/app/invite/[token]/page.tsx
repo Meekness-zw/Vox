@@ -17,8 +17,8 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
       <p className="text-sm text-muted-foreground">Invited as {String(invite.role)} · {String(invite.email)}</p>
     </CardHeader><CardContent>
       <form action={acceptInvitation.bind(null, token)} className="space-y-4">
-        <Input name="name" placeholder="Your full name" required />
-        <Input name="password" type="password" placeholder="Create password (8+ characters)" minLength={8} required />
+        <Input name="name" placeholder="Your full name" maxLength={120} required />
+        <Input name="password" type="password" placeholder="Create password (8–128 characters)" minLength={8} maxLength={128} required />
         <Button className="w-full">Accept invitation</Button>
       </form>
     </CardContent></Card>

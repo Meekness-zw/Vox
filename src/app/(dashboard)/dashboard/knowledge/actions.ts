@@ -22,8 +22,10 @@ export async function addKnowledgeSource(
   const name = String(formData.get("name") ?? "").trim();
   const content = String(formData.get("content") ?? "").trim();
 
-  if (!name) return { error: "Give this source a name." };
+  if (!(["URL", "Manual Q&A", "FAQ", "Document", "CSV"] as string[]).includes(type)) return { error: "Choose a valid source type." };
+  if (!name || name.length > 200) return { error: "Give this source a name (200 characters maximum)." };
   if (!content) return { error: "Add a URL or some text to train on." };
+  if (content.length > 2_000_000) return { error: "Knowledge content is limited to 2 MB per source." };
 
   try {
     const res = await ingestSource({

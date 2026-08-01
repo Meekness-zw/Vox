@@ -8,7 +8,6 @@ import {
   NewBusinessDocumentForm,
 } from "@/components/dashboard/document-studio";
 import { requireSession } from "@/lib/auth/session-cookies";
-import { initSchema } from "@/lib/db";
 import {
   defaultDocumentTemplate,
   documentTypeLabels,
@@ -23,7 +22,6 @@ export const dynamic = "force-dynamic";
 
 export default async function DocumentsPage() {
   const session = await requireSession();
-  await initSchema();
   const [documents, storedTemplate, businessName] = await Promise.all([
     listBusinessDocuments(session.workspaceId),
     getDocumentTemplate(session.workspaceId),

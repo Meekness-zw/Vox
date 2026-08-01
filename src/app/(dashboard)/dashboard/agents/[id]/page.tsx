@@ -8,8 +8,8 @@ import { getSession } from "@/lib/auth/session-cookies";
 import type { Agent } from "@/lib/types";
 import { isVoxAdmin } from "@/lib/admin";
 
-const blankAgent: Agent = {
-  id: "ag_web_chat", // reuse demo knowledge base for live preview
+function blankAgent(): Agent { return {
+  id: `ag_${crypto.randomUUID()}`,
   name: "",
   type: "chat",
   status: "draft",
@@ -22,7 +22,7 @@ const blankAgent: Agent = {
   businessHours: "Mon–Fri 9am–5pm",
   escalation: "Hand off to a human when the customer asks for a person.",
   createdAt: new Date().toISOString(),
-};
+}; }
 
 export default async function AgentBuilderPage({
   params,
@@ -42,7 +42,7 @@ export default async function AgentBuilderPage({
   const workspaceId = session && admin
     ? requestedWorkspace || adminBot?.workspaceId || session.workspaceId
     : session?.workspaceId;
-  const agent = isNew ? blankAgent : await getAgentById(id, workspaceId);
+  const agent = isNew ? blankAgent() : await getAgentById(id, workspaceId);
 
   if (!agent) notFound();
 

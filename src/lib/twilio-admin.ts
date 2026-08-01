@@ -99,6 +99,19 @@ export async function purchaseVoiceNumber(input: {
   );
 }
 
+export async function releaseVoiceNumber(numberSid: string) {
+  if (!/^PN[0-9a-fA-F]{32}$/.test(numberSid)) throw new Error("Invalid Twilio phone number SID.");
+  const { accountSid, authorization } = credentials();
+  const response = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers/${numberSid}.json`,
+    { method: "DELETE", headers: { authorization }, cache: "no-store" }
+  );
+  if (!response.ok && response.status !== 404) {
+    const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error(String(body.message || `Twilio could not release the number (${response.status}).`));
+  }
+}
+
 export async function startWhatsAppSender(input: {
   phoneNumber: string;
   wabaId: string;

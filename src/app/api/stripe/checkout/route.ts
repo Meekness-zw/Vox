@@ -1,5 +1,7 @@
 import { plans } from "@/lib/pricing";
 import { requireSession } from "@/lib/auth/session-cookies";
+import { getBotRequest } from "@/lib/repository";
+import { bodyTooLarge } from "@/lib/api-security";
 
 /**
  * Creates a Stripe Checkout session for a plan.
@@ -15,7 +17,11 @@ import { requireSession } from "@/lib/auth/session-cookies";
  */
 export async function POST(req: Request) {
   const session = await requireSession();
-  const { planId, botRequestId } = (await req.json()) as { planId?: string; botRequestId?: string };
+  if (bodyTooLarge(req, 16_000)) return Response.json({ error: "Request is too large." }, { status: 413 });
+  let requestBody: { planId?: string; botRequestId?: string };
+  try { requestBody = await req.json(); }
+  catch { return Response.json({ error: "Invalid JSON body" }, { status: 400 }); }
+  const { planId, botRequestId } = requestBody;
   const plan = plans.find((p) => p.id === planId);
 
   if (!plan || plan.price === null) {
@@ -27,8 +33,8 @@ export async function POST(req: Request) {
 
   const secret = process.env.STRIPE_SECRET_KEY;
   const priceId = process.env[`STRIPE_PRICE_${plan.id.toUpperCase()}`];
-  const origin =
-    req.headers.get("origin") ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const origin = new URL(appUrl).origin;
 
   if (!secret || !priceId) {
     return Response.json(
@@ -53,7 +59,11 @@ export async function POST(req: Request) {
     "metadata[workspace_id]": session.workspaceId,
     "metadata[plan_id]": plan.id,
   });
-  if (botRequestId) body.set("metadata[bot_request_id]", botRequestId);
+  if (botRequestId) {
+    const request = await getBotRequest(botRequestId, session.workspaceId);
+    if (!request) return Response.json({ error: "Bot request not found." }, { status: 404 });
+    body.set("metadata[bot_request_id]", botRequestId);
+  }
 
   const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST",

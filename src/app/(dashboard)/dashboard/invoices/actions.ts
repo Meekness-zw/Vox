@@ -24,7 +24,8 @@ export async function createInvoiceAction(
   if (!contactName) return { error: "Add the client's name." };
   if (!contactEmail) return { error: "Add the client's email." };
   if (!description) return { error: "Describe the service or item." };
-  if (!(unitPrice > 0)) return { error: "Add a price greater than zero." };
+  if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000) return { error: "Add a valid quantity greater than zero." };
+  if (!Number.isFinite(unitPrice) || !(unitPrice > 0) || unitPrice > 100_000_000) return { error: "Add a valid price greater than zero." };
 
   try {
     const businessName = await getWorkspaceName(session.workspaceId);

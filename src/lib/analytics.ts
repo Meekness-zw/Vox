@@ -115,6 +115,27 @@ export async function getAnalytics(workspaceId = "ws_demo", agentId?: string): P
 
   const cur = computeKpis(current);
   const prev = computeKpis(prior);
+  const currentStart = new Date(now - 14 * DAY).toISOString();
+  const priorStart = new Date(now - 28 * DAY).toISOString();
+  const appointmentRows = agentId
+    ? await sql`
+        select
+          count(*) filter (where starts_at >= ${currentStart} and starts_at < ${new Date(now).toISOString()})::int current_count,
+          count(*) filter (where starts_at >= ${priorStart} and starts_at < ${currentStart})::int prior_count
+        from appointments where workspace_id=${workspaceId} and agent_id=${agentId} and status <> 'cancelled'
+      `
+    : await sql`
+        select
+          count(*) filter (where starts_at >= ${currentStart} and starts_at < ${new Date(now).toISOString()})::int current_count,
+          count(*) filter (where starts_at >= ${priorStart} and starts_at < ${currentStart})::int prior_count
+        from appointments where workspace_id=${workspaceId} and status <> 'cancelled'
+      `;
+  const currentAppointments = Number(appointmentRows[0]?.current_count ?? 0);
+  const priorAppointments = Number(appointmentRows[0]?.prior_count ?? 0);
+  cur.appointmentsBooked = currentAppointments;
+  prev.appointmentsBooked = priorAppointments;
+  cur.conversionRate = current.length ? Math.round((currentAppointments / current.length) * 1000) / 10 : 0;
+  prev.conversionRate = prior.length ? Math.round((priorAppointments / prior.length) * 1000) / 10 : 0;
 
   const kpis: Kpis = {
     ...cur,

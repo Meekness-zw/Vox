@@ -14,6 +14,7 @@ import {
   updateWorkspaceUser,
 } from "@/lib/repository";
 import { encryptSecret } from "@/lib/token-crypto";
+import { assertPublicUrl } from "@/lib/public-url";
 
 async function requireManager() {
   const session = await requireSession();
@@ -45,8 +46,7 @@ export async function connectCrm(formData: FormData) {
   const name = String(formData.get("name") ?? "CRM webhook").trim();
   const webhookUrl = String(formData.get("webhookUrl") ?? "").trim();
   const secret = String(formData.get("secret") ?? "").trim();
-  const parsed = new URL(webhookUrl);
-  if (parsed.protocol !== "https:") throw new Error("CRM webhook must use HTTPS");
+  await assertPublicUrl(webhookUrl, true);
   await saveCrmConnection({
     workspaceId: session.workspaceId,
     name,
@@ -59,9 +59,16 @@ export async function connectCrm(formData: FormData) {
 
 export async function saveWidgetSettings(formData: FormData) {
   const session = await requireManager();
-  const allowedDomains = String(formData.get("allowedDomains") ?? "")
-    .split(/[\n,]/).map((v) => v.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, ""))
-    .filter(Boolean);
+  const allowedDomains = [...new Set(String(formData.get("allowedDomains") ?? "")
+    .split(/[\n,]/)
+    .map((value) => {
+      const raw = value.trim().toLowerCase();
+      if (!raw) return "";
+      try { return new URL(/^https?:\/\//.test(raw) ? raw : `https://${raw}`).hostname; }
+      catch { return ""; }
+    })
+    .filter((domain) => domain === "localhost" || /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain))
+  )].slice(0, 50);
   await updateWidgetConfig({
     workspaceId: session.workspaceId,
     allowedDomains,

@@ -4,8 +4,8 @@ import { FormEvent, useState } from "react";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
-export function WidgetClient({ token, title, welcome, color }: {
-  token: string; title: string; welcome: string; color: string;
+export function WidgetClient({ token, title, welcome, color, embedProof }: {
+  token: string; title: string; welcome: string; color: string; embedProof: string;
 }) {
   const [messages, setMessages] = useState<Msg[]>([{ role: "assistant", content: welcome }]);
   const [input, setInput] = useState("");
@@ -20,7 +20,7 @@ export function WidgetClient({ token, title, welcome, color }: {
     try {
       const res = await fetch("/api/widget/chat", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token, conversationId, messages: next }),
+        body: JSON.stringify({ token, embedProof, conversationId, messages: next }),
       });
       const data = await res.json();
       setMessages([...next, { role: "assistant", content: data.reply || "Please try again." }]);

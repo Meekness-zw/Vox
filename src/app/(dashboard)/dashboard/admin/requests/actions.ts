@@ -10,7 +10,8 @@ import { addAuditEvent, getAdminBotRequest, getAgentById, getCompanyProfile, get
 import { plans } from "@/lib/pricing";
 import { requestPythonBuild } from "@/lib/python-bot";
 import type { Agent, BotRequestStatus } from "@/lib/types";
-import { configureOwnedVoiceNumber, configureWhatsAppWebhook, getWhatsAppSender, purchaseVoiceNumber, startWhatsAppSender, verifyWhatsAppSender } from "@/lib/twilio-admin";
+import { configureOwnedVoiceNumber, configureWhatsAppWebhook, getWhatsAppSender, purchaseVoiceNumber, releaseVoiceNumber, startWhatsAppSender, verifyWhatsAppSender } from "@/lib/twilio-admin";
+import { isValidBusinessSchedule, isValidTimezone } from "@/lib/business-schedule";
 
 async function adminSession() {
   const session = await requireSession();
@@ -29,43 +30,49 @@ export async function buildRequestedBot(formData: FormData) {
     throw new Error("This client has not paid for a custom bot yet. Activate the subscription before building.");
   }
   await updateBotRequest({ id, status: "building", adminNotes: "Vox is generating the first bot configuration." });
-  const built = await requestPythonBuild({
-    businessName: request.businessName,
-    industry: request.industry,
-    description: request.description,
-    services: request.services,
-    businessHours: request.businessHours,
-    languages: request.languages,
-    tone: request.tone,
-    escalation: request.escalation,
-  });
-  const agentId = request.agentId ?? `ag_${crypto.randomUUID()}`;
-  const agent: Agent = {
-    id: agentId,
-    name: built.name,
-    type: request.channels.includes("Phone calls") ? "voice" : "chat",
-    status: "draft",
-    language: request.languages,
-    voice: "Micheal — calm, professional",
-    personality: built.personality,
-    systemPrompt: built.systemPrompt,
-    greeting: built.greeting,
-    businessHours: request.businessHours,
-    escalation: request.escalation,
-    createdAt: new Date().toISOString(),
-  };
-  await upsertAgent(agent, request.workspaceId);
-  const selectedPlan = plans.find((plan) => plan.id === subscription.plan);
-  await updateAgentBilling({
-    agentId,
-    billingStatus: "paid",
-    priceCents: (selectedPlan?.price ?? 0) * 100,
-    paidThrough: subscription.dueAt,
-  });
-  if (isDbEnabled) {
-    await ingestSource({ workspaceId: request.workspaceId, name: `${request.businessName} onboarding`, type: "Manual Q&A", content: built.knowledge });
+  try {
+    const built = await requestPythonBuild({
+      businessName: request.businessName,
+      industry: request.industry,
+      description: request.description,
+      services: request.services,
+      businessHours: request.businessHours,
+      languages: request.languages,
+      tone: request.tone,
+      escalation: request.escalation,
+    });
+    const agentId = request.agentId ?? `ag_${crypto.randomUUID()}`;
+    const agent: Agent = {
+      id: agentId,
+      name: built.name,
+      type: request.channels.includes("Phone calls") ? "voice" : "chat",
+      status: "draft",
+      language: request.languages,
+      voice: "Micheal — calm, professional",
+      personality: built.personality,
+      systemPrompt: built.systemPrompt,
+      greeting: built.greeting,
+      businessHours: request.businessHours,
+      escalation: request.escalation,
+      createdAt: new Date().toISOString(),
+    };
+    await upsertAgent(agent, request.workspaceId);
+    const selectedPlan = plans.find((plan) => plan.id === subscription.plan);
+    await updateAgentBilling({
+      agentId,
+      billingStatus: "paid",
+      priceCents: (selectedPlan?.price ?? 0) * 100,
+      paidThrough: subscription.dueAt,
+    });
+    if (isDbEnabled) {
+      await ingestSource({ workspaceId: request.workspaceId, name: `${request.businessName} onboarding`, type: "Manual Q&A", content: built.knowledge });
+    }
+    await updateBotRequest({ id, status: "testing", agentId, adminNotes: "First build complete. Vox is testing and refining the bot." });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "The bot build failed.";
+    await updateBotRequest({ id, status: "changes_requested", adminNotes: `Build failed: ${message.slice(0, 500)}` });
+    throw error;
   }
-  await updateBotRequest({ id, status: "testing", agentId, adminNotes: "First build complete. Vox is testing and refining the bot." });
   redirect(`/dashboard/admin/requests/${id}`);
 }
 
@@ -76,6 +83,9 @@ export async function updateRequestWorkflow(formData: FormData) {
   const adminNotes = String(formData.get("adminNotes") ?? "").trim();
   const request = await getAdminBotRequest(id);
   if (!request) throw new Error("Bot request not found.");
+  if (!("payment_required submitted under_review building testing changes_requested approved live".split(" ") as string[]).includes(status)) {
+    throw new Error("Invalid workflow status.");
+  }
   if (status === "live") {
     if (!request.agentId) throw new Error("Build the bot before publishing it.");
     const agent = await getAgentById(request.agentId, request.workspaceId);
@@ -117,11 +127,16 @@ export async function purchaseClientVoiceNumber(formData: FormData) {
     friendlyName: `Vox · ${request.businessName}`,
   });
   const routingPhone = purchased.phone_number;
-  await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: routingPhone, channel: "voice", agentId: request.agentId }, request.workspaceId);
-  await updateBotRequestNumber({ id, channel: "voice", number: routingPhone });
-  const profile = await getCompanyProfile(request.workspaceId);
-  if (profile) await upsertCompanyProfile({ ...profile, routingPhone, updatedAt: new Date().toISOString() });
-  await addAuditEvent(request.workspaceId, session.email, "twilio.voice_number_purchased", { routingPhone, country });
+  try {
+    await upsertPhoneNumber({ id: `pn_${crypto.randomUUID()}`, number: routingPhone, channel: "voice", agentId: request.agentId }, request.workspaceId);
+    await updateBotRequestNumber({ id, channel: "voice", number: routingPhone });
+    const profile = await getCompanyProfile(request.workspaceId);
+    if (profile) await upsertCompanyProfile({ ...profile, routingPhone, updatedAt: new Date().toISOString() });
+    await addAuditEvent(request.workspaceId, session.email, "twilio.voice_number_purchased", { routingPhone, country });
+  } catch (error) {
+    await releaseVoiceNumber(purchased.sid).catch(() => undefined);
+    throw new Error("The number was purchased but could not be assigned, so Vox released it. Please try again.", { cause: error });
+  }
   revalidatePath(`/dashboard/admin/requests/${id}`);
 }
 
@@ -203,15 +218,12 @@ export async function updateClientBusinessSchedule(formData: FormData) {
   try { businessSchedule = JSON.parse(String(formData.get("businessSchedule") ?? "[]")); } catch {}
   const request = await getAdminBotRequest(id);
   if (!request) throw new Error("Bot request not found.");
-  try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch {
+  if (!isValidTimezone(timezone)) {
     throw new Error("Select a valid business timezone.");
   }
-  if (!businessHours || businessSchedule.length !== 7 || businessSchedule.some((entry) =>
-    typeof entry.day !== "string" || typeof entry.enabled !== "boolean" ||
-    !/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.opens) ||
-    !/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.closes) ||
-    (entry.enabled && entry.opens >= entry.closes)
-  )) throw new Error("Check the selected business days and times.");
+  if (!businessHours || !isValidBusinessSchedule(businessSchedule)) {
+    throw new Error("Check the selected business days and times.");
+  }
   await updateManagedBusinessSchedule({
     requestId: id,
     workspaceId: request.workspaceId,

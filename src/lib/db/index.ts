@@ -368,6 +368,15 @@ create table if not exists audit_events (
 );
 create index if not exists audit_events_ws_idx on audit_events (workspace_id, created_at desc);
 
+create table if not exists webhook_events (
+  id text primary key,
+  provider text not null,
+  response_text text,
+  claimed_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+create index if not exists webhook_events_claimed_idx on webhook_events (claimed_at);
+
 -- Supabase exposes tables in the public schema through its Data API. Vox uses
 -- a trusted server-side PostgreSQL connection and its own workspace checks, so
 -- RLS is enabled without public policies: anon/authenticated Data API callers
@@ -394,6 +403,7 @@ alter table widget_rate_limits enable row level security;
 alter table crm_connections enable row level security;
 alter table crm_deliveries enable row level security;
 alter table audit_events enable row level security;
+alter table webhook_events enable row level security;
 `;
 
 export async function initSchema() {

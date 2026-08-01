@@ -4,9 +4,9 @@ An AI-powered customer engagement platform: AI voice agents, AI chat agents,
 WhatsApp, SMS follow-up, real appointment booking (Google Calendar), invoicing,
 knowledge-base training, multi-language support, and conversation analytics.
 
-This repository is the **MVP** described in the product requirements — a
-focused Voice + Chat SaaS — built with the Next.js App Router and deployable to
-Vercel.
+The web application runs on Vercel and the real-time Python voice engine runs
+on Railway. Supabase Postgres stores tenant, bot, channel, appointment,
+document, billing, and audit records.
 
 ## What's built
 
@@ -49,11 +49,11 @@ real model (default `anthropic/claude-haiku-4-5`) via the **Vercel AI Gateway**;
 without a key it uses a built-in knowledge-base responder. The frontend
 (`ChatPanel`, `useChat`) powers `/demo` and the Agent Builder live preview.
 
-**2. AI Voice Agent** — a full **STT → LLM → TTS** phone loop over Twilio:
-- `POST /api/voice/incoming` greets the caller and opens a `<Gather>` for speech
-- `POST /api/voice/respond` takes the transcribed speech, runs it through the
-  same agent brain (`generateReply`), speaks the reply, and listens again —
-  ending the call gracefully on "goodbye"
+**2. AI Voice Agent** — a real-time **STT → LLM → TTS** phone loop over Twilio
+Media Streams. Railway receives call audio continuously, transcribes with
+ElevenLabs Scribe (OpenAI fallback), keeps the caller's selected English or
+Shona language stable, supports interruption, and streams the assigned
+ElevenLabs voice back. The older `<Gather>` loop remains as a safe fallback.
 
 Point a Twilio number's Voice webhook at `/api/voice/incoming` and call it. It
 shares `buildSystemPrompt` and the knowledge base with the chat agent, so both
@@ -73,11 +73,11 @@ Conversations dashboard automatically (channel: "whatsapp").
 not just talk about it. `src/lib/agent-tools.ts` exposes `check_availability`
 and `book_appointment` as AI SDK tool calls (`src/lib/agent-runtime.ts`); Google
 account **OAuth** is per-workspace (`/api/integrations/google/connect` +
-`/callback`, wired into Settings → Integrations). Without a connected
-calendar, availability falls back to a naive 9–5 slot generator against
-already-booked `appointments` rows, so booking works with zero config and
-upgrades to real Google Calendar sync — plus a real calendar event — the
-moment a workspace connects one. See `/dashboard/appointments`.
+`/callback`, wired into Settings → Integrations). Without a connected calendar,
+availability uses that workspace's selected days, hours, timezone, and existing
+appointments. With Google connected it also excludes Google busy periods and
+creates a real event. Concurrent reservations are locked to prevent double
+booking. See `/dashboard/appointments`.
 
 **5. Invoices (PDF + email)** — once a service/price is agreed, agents call
 `create_invoice` (`src/lib/agent-tools.ts`) to generate a PDF (`pdf-lib`) and
@@ -92,8 +92,8 @@ phone calls, WhatsApp, and signed-in dashboard chat) — the public marketing
 `/demo` stays read-only so an anonymous visitor can't create real appointments
 or invoices.
 
-**6. Database** — set `DATABASE_URL` (e.g. Neon Postgres from the Vercel
-Marketplace) and the dashboard reads agents and conversations from Postgres; the
+**6. Database** — set `DATABASE_URL` (Supabase Postgres) and the dashboard reads
+all client and admin data from Postgres; the
 Agent Builder's **Save** writes through a server action. Initialize + seed with:
 
 ```bash
@@ -184,33 +184,30 @@ Add `AI_GATEWAY_API_KEY` (and any `STRIPE_*` keys) in Project → Settings →
 Environment Variables. On Vercel, the AI Gateway also works via the platform's
 OIDC token without an explicit key.
 
-## Implementation notes & next steps
+## Production notes
 
-Auth + multi-tenancy, the RAG knowledge base, conversation capture, real
-analytics, the voice loop, WhatsApp, Google Calendar booking, invoicing,
-Postgres persistence, and Stripe checkout are all wired end-to-end. Remaining
-production hardening:
+Auth + multi-tenancy, RAG, conversation capture, analytics, Media Streams
+voice, WhatsApp, Google Calendar, documents, Stripe, Twilio number purchasing,
+and WhatsApp sender onboarding are wired end-to-end.
 
-- **Voice state at scale** — call sessions live in an in-memory `Map` keyed by
-  `CallSid` (`src/lib/voice/twiml.ts`); move to Redis/Postgres for multi-instance
-  deploys. (WhatsApp already sidesteps this — its thread state is DB-backed.)
-- **Webhook security** — `TWILIO_AUTH_TOKEN` enables `X-Twilio-Signature`
-  validation (`src/lib/twilio-signature.ts`) on all three Twilio webhooks, but
-  it's skipped when unset; set it before production. Protect/remove
-  `/api/admin/seed` after first run.
+- **Secrets are mandatory** — configure `SESSION_SECRET`,
+  `VOX_BOT_SERVICE_TOKEN`, `TWILIO_AUTH_TOKEN`, and `TOKEN_ENCRYPTION_KEY` in
+  the relevant Vercel/Railway projects. Webhooks and the Python service fail
+  closed in production when verification secrets are absent.
+- **Number ownership** — a client's existing number must be ported to Twilio or
+  forwarded to the Twilio number assigned to its bot. WhatsApp numbers go
+  through Meta/Twilio verification before Vox can activate them.
 - **Model-generated summaries** — `analyzeConversation` is heuristic; swap in a
   model pass (the seam is `src/lib/conversation.ts`) when the gateway is funded.
 - **PDF ingestion** — the knowledge base ingests URLs and text today; add a PDF
   parser (e.g. `unpdf`) for the PDF/Document tiles.
-- **Stripe metering** — checkout completion and invoice payment state are
-  synchronized, but usage-based limits still need enforcement and reporting.
+- **Plan limits** — live usage is reported from database records. Add hard
+  quota enforcement if a plan must stop answering immediately at its limit.
 - **KPI reconciliation** — the Overview's `appointmentsBooked` KPI still comes
   from the `analyzeConversation` heuristic, not the real `appointments` table;
   worth swapping to a real count now that appointments are real.
-- **Real-time voice** — the phone loop is turn-based (`<Gather>`); barge-in/
-  interruption would need Twilio Media Streams, a bigger integration.
-- **Rate limiting** — no per-contact throttling on AI Gateway calls yet; worth
-  adding now that a call/message can trigger real calendar writes and emails.
+- **Optional services** — Resend and Stripe can remain unset during testing;
+  PDF creation, calls, WhatsApp, CRM webhooks, and calendar booking still work.
 
 > Intentionally **not** built (per the requirements): website builder, lead
 > finder, proposal generator, agency/reseller/affiliate programs, white-label

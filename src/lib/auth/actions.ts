@@ -1,10 +1,13 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { createHash } from "node:crypto";
 import {
   findUserByEmail,
   createWorkspaceWithOwner,
   isDbEnabled,
+  consumeWidgetRateLimit,
 } from "@/lib/repository";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { signSession } from "@/lib/auth/session";
@@ -16,6 +19,14 @@ export type AuthState = { error?: string };
 const DEMO_EMAIL = "demo@vox.ai";
 const DEMO_PASSWORD = "demo1234";
 
+async function allowAuthAttempt(scope: string, email: string, limit: number) {
+  if (!isDbEnabled) return true;
+  const requestHeaders = await headers();
+  const ip = requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const identity = createHash("sha256").update(`${ip}:${email}`).digest("hex").slice(0, 32);
+  return consumeWidgetRateLimit(`auth:${scope}`, identity, limit);
+}
+
 export async function login(
   _prev: AuthState,
   formData: FormData
@@ -24,6 +35,10 @@ export async function login(
   const password = String(formData.get("password") ?? "");
 
   if (!email || !password) return { error: "Email and password are required." };
+  if (password.length > 128) return { error: "Invalid email or password." };
+  if (!(await allowAuthAttempt("login", email, 10))) {
+    return { error: "Too many sign-in attempts. Please wait a minute and try again." };
+  }
 
   if (!isDbEnabled) {
     if (email === DEMO_EMAIL && password === DEMO_PASSWORD) {
@@ -69,8 +84,15 @@ export async function signup(
   if (!name || !email || !password) {
     return { error: "Name, email and password are required." };
   }
-  if (password.length < 8) {
-    return { error: "Password must be at least 8 characters." };
+  if (!(await allowAuthAttempt("signup", email, 5))) {
+    return { error: "Too many sign-up attempts. Please wait a minute and try again." };
+  }
+  if (name.length > 120 || workspaceName.length > 160 || email.length > 320 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { error: "Enter a valid name, business name, and email address." };
+  }
+  if (password.length < 8 || password.length > 128) {
+    return { error: "Password must be between 8 and 128 characters." };
   }
   if (!isDbEnabled) {
     return {
@@ -81,12 +103,22 @@ export async function signup(
     return { error: "An account with that email already exists." };
   }
 
-  const user = await createWorkspaceWithOwner({
-    workspaceName: workspaceName || `${name}'s workspace`,
-    email,
-    name,
-    passwordHash: hashPassword(password),
-  });
+  let user;
+  try {
+    user = await createWorkspaceWithOwner({
+      workspaceName: workspaceName || `${name}'s workspace`,
+      email,
+      name,
+      passwordHash: hashPassword(password),
+    });
+  } catch (error) {
+    // The unique database constraint is the final authority when two sign-ups
+    // for the same email race each other.
+    if (error instanceof Error && /unique|duplicate/i.test(error.message)) {
+      return { error: "An account with that email already exists." };
+    }
+    throw error;
+  }
   await setSessionCookie(
     await signSession({
       userId: user.id,

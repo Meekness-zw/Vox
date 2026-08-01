@@ -5,11 +5,17 @@ import {
   verifySession,
   type SessionPayload,
 } from "./session";
+import { findActiveUserBySession, isDbEnabled } from "@/lib/repository";
 
 /** Read + verify the current session from cookies (server only). */
 export async function getSession(): Promise<SessionPayload | null> {
   const store = await cookies();
-  return verifySession(store.get(SESSION_COOKIE)?.value);
+  const session = await verifySession(store.get(SESSION_COOKIE)?.value);
+  if (!session || !isDbEnabled) return session;
+
+  const user = await findActiveUserBySession(session.userId, session.workspaceId);
+  if (!user || user.email.toLowerCase() !== session.email.toLowerCase()) return null;
+  return session;
 }
 
 /** Session or throw — use in pages/actions that require auth. */

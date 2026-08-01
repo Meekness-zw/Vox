@@ -21,8 +21,6 @@ const staticIntegrations = [
   { name: "Telnyx", category: "Telephony", connected: false },
 ];
 
-const roleVariant = { Owner: "default", Admin: "success", Agent: "muted" } as const;
-
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ invite?: string }> }) {
   const session = await getSession();
   const workspaceId = session?.workspaceId ?? "ws_demo";

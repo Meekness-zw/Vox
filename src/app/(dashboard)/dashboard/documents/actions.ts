@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/auth/session-cookies";
-import { initSchema } from "@/lib/db";
 import {
   createBusinessDocument,
   defaultDocumentTemplate,
@@ -34,7 +33,6 @@ export async function createDocumentAction(
   formData: FormData
 ): Promise<DocumentActionState> {
   const session = await requireSession();
-  await initSchema();
   const type = String(formData.get("type") ?? "") as BusinessDocumentType;
   const contactName = String(formData.get("contactName") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
@@ -45,7 +43,11 @@ export async function createDocumentAction(
   if (!allowedTypes.has(type)) return { error: "Choose a valid document type." };
   if (!contactName) return { error: "Add the customer or company name." };
   if (!description) return { error: "Add an item or service description." };
-  if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+  if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000) {
+    return { error: "Enter a valid quantity." };
+  }
+  if (!Number.isFinite(unitPrice) || unitPrice < 0 || unitPrice > 100_000_000 ||
+      !Number.isFinite(taxRate) || taxRate > 100) {
     return { error: "Enter a valid unit price." };
   }
 
@@ -85,7 +87,6 @@ export async function saveDocumentTemplateAction(
   formData: FormData
 ): Promise<DocumentActionState> {
   const session = await requireSession();
-  await initSchema();
   const current =
     (await getDocumentTemplate(session.workspaceId)) ??
     defaultDocumentTemplate(await getWorkspaceName(session.workspaceId));

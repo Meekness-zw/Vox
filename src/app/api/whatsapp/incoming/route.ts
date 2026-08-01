@@ -5,9 +5,12 @@ import {
   getAgentById,
   getConversationById,
   getRoutingForNumber,
+  claimWebhookEvent,
+  completeWebhookEvent,
+  releaseWebhookEvent,
   upsertConversation,
 } from "@/lib/repository";
-import { messageReply } from "@/lib/voice/twiml";
+import { messageReply, twimlResponse } from "@/lib/voice/twiml";
 import { formDataToParams, isValidTwilioRequest, publicWebhookUrl } from "@/lib/twilio-signature";
 
 export const maxDuration = 30;
@@ -50,7 +53,14 @@ export async function POST(req: Request) {
   if (!agent) {
     return messageReply("Sorry, something went wrong on our end. Please try again later.");
   }
+  const messageSid = String(form.get("MessageSid") ?? "");
+  const eventId = messageSid ? `twilio:whatsapp:${messageSid}` : "";
+  if (eventId) {
+    const claim = await claimWebhookEvent(eventId, "twilio_whatsapp");
+    if (!claim.claimed) return claim.responseText ? messageReply(claim.responseText) : twimlResponse("");
+  }
 
+  try {
   const threadId = "wa_" + route.workspaceId + "_" + from.replace(/[^a-zA-Z0-9]/g, "");
   const existing = await getConversationById(threadId, route.workspaceId);
 
@@ -80,6 +90,11 @@ export async function POST(req: Request) {
     messages: history,
   });
   await upsertConversation(record, route.workspaceId);
+  if (eventId) await completeWebhookEvent(eventId, reply);
 
   return messageReply(reply);
+  } catch (error) {
+    if (eventId) await releaseWebhookEvent(eventId);
+    throw error;
+  }
 }

@@ -14,7 +14,11 @@ export async function updateBotManagement(formData: FormData) {
   const billingStatus = String(formData.get("billingStatus") ?? "unpaid") as BotBillingStatus;
   const amount = Number(formData.get("monthlyPrice") ?? 0);
   const paidThrough = String(formData.get("paidThrough") ?? "").trim();
-  if (!agentId || !Number.isFinite(amount) || amount < 0) throw new Error("Invalid bot management values.");
+  if (!agentId || !["active", "paused", "draft"].includes(status) ||
+      !["trial", "paid", "unpaid", "past_due", "cancelled"].includes(billingStatus) ||
+      !Number.isFinite(amount) || amount < 0 || amount > 1_000_000) {
+    throw new Error("Invalid bot management values.");
+  }
   await updateAdminAgentState({ agentId, status, billingStatus, priceCents: Math.round(amount * 100), paidThrough: paidThrough ? new Date(`${paidThrough}T23:59:59Z`).toISOString() : undefined });
   revalidatePath("/dashboard/admin/bots");
 }

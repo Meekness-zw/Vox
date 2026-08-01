@@ -1,5 +1,10 @@
 import {
   findWorkspaceByStripeSubscription,
+  getBotRequest,
+  getWorkspaceSubscription,
+  claimWebhookEvent,
+  completeWebhookEvent,
+  releaseWebhookEvent,
   updateBotRequest,
   updateWorkspaceSubscription,
 } from "@/lib/repository";
@@ -7,6 +12,7 @@ import {
 export const runtime = "nodejs";
 
 type StripeEvent = {
+  id: string;
   type: string;
   data: { object: Record<string, unknown> };
 };
@@ -19,10 +25,11 @@ function safeEqual(a: string, b: string) {
 }
 
 async function verifySignature(payload: string, header: string, secret: string) {
-  const parts = Object.fromEntries(header.split(",").map((part) => part.split("=", 2)));
-  const timestamp = parts.t;
-  const signature = parts.v1;
-  if (!timestamp || !signature || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+  const parts = header.split(",").map((part) => part.trim().split("=", 2));
+  const timestamp = parts.find(([key]) => key === "t")?.[1];
+  const signatures = parts.filter(([key, value]) => key === "v1" && value).map(([, value]) => value);
+  const timestampNumber = Number(timestamp);
+  if (!timestamp || !Number.isFinite(timestampNumber) || !signatures.length || Math.abs(Date.now() / 1000 - timestampNumber) > 300) return false;
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -32,7 +39,16 @@ async function verifySignature(payload: string, header: string, secret: string) 
   );
   const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${payload}`));
   const expected = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return safeEqual(expected, signature);
+  return signatures.some((signature) => safeEqual(expected, signature));
+}
+
+function invoiceSubscriptionId(object: Record<string, unknown>) {
+  if (typeof object.subscription === "string") return object.subscription;
+  if (!object.parent || typeof object.parent !== "object") return "";
+  const details = (object.parent as Record<string, unknown>).subscription_details;
+  if (!details || typeof details !== "object") return "";
+  const subscription = (details as Record<string, unknown>).subscription;
+  return typeof subscription === "string" ? subscription : "";
 }
 
 async function subscriptionDueAt(subscriptionId: string, secret: string) {
@@ -57,8 +73,18 @@ export async function POST(req: Request) {
   if (!(await verifySignature(payload, signature, webhookSecret))) {
     return Response.json({ error: "Invalid Stripe signature." }, { status: 400 });
   }
-  const event = JSON.parse(payload) as StripeEvent;
+  let event: StripeEvent;
+  try { event = JSON.parse(payload) as StripeEvent; }
+  catch { return Response.json({ error: "Invalid Stripe payload." }, { status: 400 }); }
+  if (!event.id?.startsWith("evt_") || !event.type || !event.data?.object) {
+    return Response.json({ error: "Invalid Stripe event." }, { status: 400 });
+  }
+  const eventKey = `stripe:${event.id}`;
+  const claim = await claimWebhookEvent(eventKey, "stripe");
+  if (!claim.claimed) return Response.json({ received: true, duplicate: true });
   const object = event.data.object;
+
+  try {
 
   if (event.type === "checkout.session.completed") {
     const metadata = (object.metadata ?? {}) as Record<string, string>;
@@ -74,32 +100,37 @@ export async function POST(req: Request) {
         stripeSubscriptionId: subscriptionId,
       });
       if (metadata.bot_request_id) {
-        await updateBotRequest({
-          id: metadata.bot_request_id,
-          status: "submitted",
-          adminNotes: "Payment confirmed. Your custom bot is ready for Vox review.",
-        });
+        const request = await getBotRequest(metadata.bot_request_id, workspaceId);
+        if (request && request.status === "payment_required") {
+          await updateBotRequest({
+            id: metadata.bot_request_id, workspaceId,
+            status: "submitted",
+            adminNotes: "Payment confirmed. Your custom bot is ready for Vox review.",
+          });
+        }
       }
     }
   }
 
   if (event.type === "invoice.payment_failed" || event.type === "invoice.paid") {
-    const subscriptionId = typeof object.subscription === "string"
-      ? object.subscription
-      : typeof object.parent === "object" && object.parent
-        ? String((object.parent as Record<string, unknown>).subscription_details ?? "")
-        : "";
+    const subscriptionId = invoiceSubscriptionId(object);
     const workspaceId = subscriptionId
       ? await findWorkspaceByStripeSubscription(subscriptionId)
       : undefined;
     if (workspaceId) {
+      const current = await getWorkspaceSubscription(workspaceId);
       await updateWorkspaceSubscription({
         workspaceId,
-        plan: "starter",
+        plan: current.plan,
         status: event.type === "invoice.paid" ? "active" : "past_due",
       });
     }
   }
 
-  return Response.json({ received: true });
+    await completeWebhookEvent(eventKey);
+    return Response.json({ received: true });
+  } catch (error) {
+    await releaseWebhookEvent(eventKey);
+    throw error;
+  }
 }

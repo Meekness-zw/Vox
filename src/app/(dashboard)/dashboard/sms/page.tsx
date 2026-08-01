@@ -29,7 +29,7 @@ export default async function SmsPage() {
     <Card><CardHeader><CardTitle>Delivery history</CardTitle></CardHeader><CardContent className="p-0">
       <div className="divide-y">{messages.length ? messages.map((m) => <div key={String(m.id)} className="grid gap-2 px-5 py-4 text-sm sm:grid-cols-[160px_1fr_110px]">
         <div><div className="font-medium">{String(m.to_number)}</div><div className="text-xs text-muted-foreground">{new Date(m.created_at as Date).toLocaleString()}</div></div>
-        <div><p>{String(m.body)}</p>{m.error_message && <p className="mt-1 text-xs text-destructive">{String(m.error_message)}</p>}</div>
+        <div><p>{String(m.body)}</p>{m.error_message && <p className="mt-1 text-xs text-danger">{String(m.error_message)}</p>}</div>
         <Badge variant={m.status === "failed" ? "muted" : "success"}>{String(m.status)}</Badge>
       </div>) : <p className="p-6 text-sm text-muted-foreground">No SMS messages sent yet.</p>}</div>
     </CardContent></Card>

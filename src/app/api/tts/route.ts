@@ -1,6 +1,7 @@
 import { experimental_generateSpeech as generateSpeech } from "ai";
 import { hasModelCredentials } from "@/lib/agent-runtime";
 import { resolveElevenLabsVoiceId } from "@/lib/voice/elevenlabs-voices";
+import { allowRequest, bodyTooLarge } from "@/lib/api-security";
 
 export const maxDuration = 30;
 
@@ -12,10 +13,16 @@ export const maxDuration = 30;
  *   3. 501 → the client falls back to the browser's built-in voice.
  */
 export async function POST(req: Request) {
-  const { text, voice } = (await req.json()) as { text?: string; voice?: string };
+  if (bodyTooLarge(req, 32_000)) return Response.json({ error: "Request is too large." }, { status: 413 });
+  if (!(await allowRequest(req, "tts", 30))) return Response.json({ error: "Too many requests." }, { status: 429 });
+  let body: { text?: string; voice?: string };
+  try { body = await req.json(); }
+  catch { return Response.json({ error: "Invalid JSON body" }, { status: 400 }); }
+  const { text, voice } = body;
   if (!text?.trim()) {
     return Response.json({ error: "No text" }, { status: 400 });
   }
+  if (text.length > 4_000) return Response.json({ error: "Text is too long." }, { status: 413 });
 
   // 1) ElevenLabs
   const elevenKey = process.env.ELEVENLABS_API_KEY;

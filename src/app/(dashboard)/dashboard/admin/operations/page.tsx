@@ -19,10 +19,12 @@ async function endpoint(url: string) {
 export default async function OperationsPage() {
   const session = await requireSession();
   if (!isVoxAdmin(session.email)) redirect("/dashboard");
+  const botBase = process.env.VOX_BOT_SERVICE_URL ?? "http://127.0.0.1:8000";
+  const appBase = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const [snapshot, railway, vercel] = await Promise.all([
     getOperationsSnapshot(),
-    endpoint("https://vox-production-12ac.up.railway.app/health"),
-    endpoint("https://vox-rust-six.vercel.app/"),
+    endpoint(new URL("/health", botBase).toString()),
+    endpoint(new URL("/", appBase).toString()),
   ]);
   const services = [
     { name: "Vercel application", ...vercel },
@@ -31,7 +33,7 @@ export default async function OperationsPage() {
       name: "Supabase database",
       ok: true,
       latency: snapshot.databaseLatency,
-      status: 200,
+        status: snapshot.databaseLatency >= 0 ? 200 : 0,
     },
   ];
   return <><Topbar title="Operations" /><div className="space-y-6 p-4 sm:p-6">
@@ -44,7 +46,7 @@ export default async function OperationsPage() {
     </div>
     <Card><CardHeader><CardTitle>Live service checks</CardTitle></CardHeader><CardContent className="divide-y p-0">
       {services.map((s) => <div key={s.name} className="flex items-center justify-between px-5 py-4 text-sm">
-        <span className="font-medium">{s.name}</span><span className={s.ok ? "text-success" : "text-destructive"}>{s.ok ? `Operational${s.latency ? ` · ${s.latency} ms` : ""}` : `Unavailable · HTTP ${s.status}`}</span>
+        <span className="font-medium">{s.name}</span><span className={s.ok ? "text-success" : "text-danger"}>{s.ok ? `Operational${s.latency ? ` · ${s.latency} ms` : ""}` : `Unavailable · HTTP ${s.status}`}</span>
       </div>)}
     </CardContent></Card>
   </div></>;

@@ -2,7 +2,7 @@ import { isDbEnabled } from "@/lib/db";
 import { hasModelCredentials, DEFAULT_MODEL } from "@/lib/agent-runtime";
 import { hasCalendarCredentials } from "@/lib/calendar";
 import { hasEmailCredentials } from "@/lib/invoices";
-import { getCalendarConnection } from "@/lib/repository";
+import { getCalendarConnection, getWorkspaceSendingNumber } from "@/lib/repository";
 
 export type ServiceStatus = {
   key: "model" | "database" | "voice" | "whatsapp" | "calendar" | "email";
@@ -13,8 +13,13 @@ export type ServiceStatus = {
 
 export async function getSystemStatus(workspaceId = "ws_demo"): Promise<ServiceStatus[]> {
   const modelConnected = hasModelCredentials();
-  const voiceConnected = Boolean(process.env.TWILIO_ACCOUNT_SID);
-  const whatsappConnected = Boolean(process.env.TWILIO_WHATSAPP_NUMBER);
+  const twilioConnected = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+  const [voiceNumber, whatsappNumber] = await Promise.all([
+    getWorkspaceSendingNumber(workspaceId, "voice"),
+    getWorkspaceSendingNumber(workspaceId, "whatsapp"),
+  ]);
+  const voiceConnected = twilioConnected && Boolean(voiceNumber);
+  const whatsappConnected = twilioConnected && Boolean(whatsappNumber);
   const emailConnected = hasEmailCredentials();
   const calendarConnection = hasCalendarCredentials()
     ? await getCalendarConnection(workspaceId)
@@ -59,7 +64,7 @@ export async function getSystemStatus(workspaceId = "ws_demo"): Promise<ServiceS
       connected: Boolean(calendarConnection),
       detail: calendarConnection
         ? "Google Calendar connected"
-        : "Naive availability (connect Google Calendar in Settings)",
+        : "Workspace schedule + Vox bookings (connect Google Calendar for external busy events)",
     },
     {
       key: "email",

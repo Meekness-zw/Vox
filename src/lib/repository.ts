@@ -200,6 +200,24 @@ export async function upsertPhoneNumber(entry: {
   `;
 }
 
+export async function getWorkspaceSendingNumber(
+  workspaceId: string,
+  preferredChannel: "voice" | "whatsapp" = "voice"
+): Promise<string | null> {
+  if (!sql) {
+    const configured = preferredChannel === "whatsapp"
+      ? process.env.TWILIO_WHATSAPP_NUMBER
+      : process.env.TWILIO_PHONE_NUMBER;
+    return configured?.trim() || null;
+  }
+  const rows = await sql`
+    select number from phone_numbers
+    where workspace_id = ${workspaceId} and channel = ${preferredChannel}
+    order by created_at asc limit 1
+  `;
+  return rows.length ? String(rows[0].number) : null;
+}
+
 /* ---- calendar connections --------------------------------------------------- */
 
 export type CalendarConnection = {
@@ -328,6 +346,31 @@ export async function insertAppointment(
       ${a.contactPhone ?? null}, ${a.contactEmail ?? null}, ${a.service}, ${a.startsAt}, ${a.endsAt},
       ${a.status}, ${a.googleEventId ?? null}, ${a.createdAt})
   `;
+}
+
+/** Atomically reserve a slot within a workspace to prevent double bookings. */
+export async function insertAppointmentIfAvailable(
+  a: Appointment,
+  workspaceId: string
+): Promise<void> {
+  if (!sql) return;
+  await sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${workspaceId}))`;
+    const overlap = await tx`
+      select 1 from appointments
+      where workspace_id = ${workspaceId} and status = 'confirmed'
+        and starts_at < ${a.endsAt} and ends_at > ${a.startsAt}
+      limit 1
+    `;
+    if (overlap.length) throw new Error("That time is no longer available");
+    await tx`
+      insert into appointments (id, workspace_id, agent_id, conversation_id, contact_name,
+        contact_phone, contact_email, service, starts_at, ends_at, status, google_event_id, created_at)
+      values (${a.id}, ${workspaceId}, ${a.agentId}, ${a.conversationId ?? null}, ${a.contactName},
+        ${a.contactPhone ?? null}, ${a.contactEmail ?? null}, ${a.service}, ${a.startsAt}, ${a.endsAt},
+        ${a.status}, ${a.googleEventId ?? null}, ${a.createdAt})
+    `;
+  });
 }
 
 export async function cancelAppointmentRow(
@@ -559,6 +602,7 @@ export async function upsertAgent(
       personality = excluded.personality, system_prompt = excluded.system_prompt,
       greeting = excluded.greeting, business_hours = excluded.business_hours,
       escalation = excluded.escalation
+    where agents.workspace_id = excluded.workspace_id
   `;
 }
 
@@ -593,6 +637,8 @@ export async function upsertConversation(
       duration_sec = excluded.duration_sec, sentiment = excluded.sentiment,
       outcome = excluded.outcome, summary = excluded.summary,
       action_items = excluded.action_items, transcript = excluded.transcript
+    where conversations.workspace_id = excluded.workspace_id
+      and conversations.agent_id = excluded.agent_id
   `;
 }
 
@@ -682,6 +728,7 @@ export async function getAdminBotRequest(id: string): Promise<BotRequest | undef
 
 export async function updateBotRequest(input: {
   id: string;
+  workspaceId?: string;
   status: BotRequestStatus;
   adminNotes?: string;
   agentId?: string;
@@ -694,8 +741,10 @@ export async function updateBotRequest(input: {
   }
   await sql`
     update bot_requests set status = ${input.status},
-      admin_notes = ${input.adminNotes ?? ""}, agent_id = ${input.agentId ?? null},
+      admin_notes = coalesce(${input.adminNotes ?? null}, admin_notes),
+      agent_id = coalesce(${input.agentId ?? null}, agent_id),
       updated_at = ${now} where id = ${input.id}
+      and (${input.workspaceId ?? null}::text is null or workspace_id = ${input.workspaceId ?? null})
   `;
 }
 
@@ -819,14 +868,33 @@ export async function getWorkspaceSubscription(workspaceId: string): Promise<{
   plan: string;
   status: SubscriptionStatus;
   dueAt?: string;
+  stripeCustomerId?: string;
 }> {
   if (!sql) return { plan: workspaceId === "ws_demo" ? "growth" : "free", status: workspaceId === "ws_demo" ? "active" : "free" };
-  const rows = await sql`select plan, subscription_status, subscription_due_at from workspaces where id = ${workspaceId} limit 1`;
+  const rows = await sql`select plan, subscription_status, subscription_due_at, stripe_customer_id from workspaces where id = ${workspaceId} limit 1`;
   if (!rows.length) return { plan: "free", status: "free" };
   return {
     plan: rows[0].plan as string,
     status: rows[0].subscription_status as SubscriptionStatus,
     dueAt: rows[0].subscription_due_at ? new Date(rows[0].subscription_due_at as string).toISOString() : undefined,
+    stripeCustomerId: (rows[0].stripe_customer_id as string) || undefined,
+  };
+}
+
+export async function getWorkspaceUsage(workspaceId: string, since: string) {
+  if (!sql) return { voiceMinutes: 0, chatConversations: 0, agents: mockAgents.length };
+  const [row] = await sql`
+    select
+      coalesce((select ceil(sum(duration_sec) / 60.0)::int from conversations
+        where workspace_id=${workspaceId} and channel='voice' and started_at >= ${since}), 0) voice_minutes,
+      coalesce((select count(*)::int from conversations
+        where workspace_id=${workspaceId} and channel in ('chat','whatsapp','sms') and started_at >= ${since}), 0) chat_conversations,
+      coalesce((select count(*)::int from agents where workspace_id=${workspaceId}), 0) agents
+  `;
+  return {
+    voiceMinutes: Number(row.voice_minutes),
+    chatConversations: Number(row.chat_conversations),
+    agents: Number(row.agents),
   };
 }
 
@@ -981,6 +1049,29 @@ export async function findUserByEmail(email: string): Promise<DbUser | null> {
   };
 }
 
+export async function findActiveUserBySession(
+  userId: string,
+  workspaceId: string
+): Promise<DbUser | null> {
+  if (!sql) return null;
+  const rows = await sql`
+    select * from users
+    where id = ${userId} and workspace_id = ${workspaceId} and status = 'active'
+    limit 1
+  `;
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    id: r.id as string,
+    workspaceId: r.workspace_id as string,
+    email: r.email as string,
+    passwordHash: r.password_hash as string,
+    name: r.name as string,
+    role: r.role as string,
+    status: String(r.status),
+  };
+}
+
 export async function createWorkspaceWithOwner(opts: {
   workspaceName: string;
   email: string;
@@ -988,13 +1079,15 @@ export async function createWorkspaceWithOwner(opts: {
   passwordHash: string;
 }): Promise<DbUser> {
   if (!sql) throw new Error("DATABASE_URL is not set");
-  const wsId = "ws_" + Math.random().toString(36).slice(2, 10);
-  const userId = "u_" + Math.random().toString(36).slice(2, 10);
-  await sql`insert into workspaces (id, name) values (${wsId}, ${opts.workspaceName})`;
-  await sql`
-    insert into users (id, workspace_id, email, password_hash, name, role)
-    values (${userId}, ${wsId}, ${opts.email.toLowerCase()}, ${opts.passwordHash}, ${opts.name}, 'Owner')
-  `;
+  const wsId = "ws_" + crypto.randomUUID();
+  const userId = "u_" + crypto.randomUUID();
+  await sql.begin(async (tx) => {
+    await tx`insert into workspaces (id, name) values (${wsId}, ${opts.workspaceName})`;
+    await tx`
+      insert into users (id, workspace_id, email, password_hash, name, role)
+      values (${userId}, ${wsId}, ${opts.email.toLowerCase()}, ${opts.passwordHash}, ${opts.name}, 'Owner')
+    `;
+  });
   return {
     id: userId,
     workspaceId: wsId,
@@ -1060,6 +1153,12 @@ export async function getWorkspaceName(workspaceId = "ws_demo"): Promise<string>
   if (!sql) return "Bright Smile Dental";
   const rows = await sql`select name from workspaces where id = ${workspaceId} limit 1`;
   return rows.length ? (rows[0].name as string) : "Your Business";
+}
+
+export async function workspaceExists(workspaceId: string): Promise<boolean> {
+  if (!sql) return workspaceId === "ws_demo";
+  const rows = await sql`select 1 from workspaces where id=${workspaceId} limit 1`;
+  return rows.length > 0;
 }
 
 export async function createTeamInvitation(opts: {
@@ -1221,6 +1320,45 @@ export async function listAuditEvents(workspaceId: string) {
     select * from audit_events where workspace_id=${workspaceId}
     order by created_at desc limit 25
   `;
+}
+
+export async function claimWebhookEvent(id: string, provider: string): Promise<{
+  claimed: boolean; responseText?: string;
+}> {
+  if (!sql) return { claimed: true };
+  try {
+    const rows = await sql`
+      insert into webhook_events(id,provider) values(${id},${provider})
+      on conflict(id) do update set claimed_at=now()
+        where webhook_events.completed_at is null
+          and webhook_events.claimed_at < now() - interval '10 minutes'
+      returning response_text
+    `;
+    if (rows.length) return { claimed: true };
+    const existing = await sql`select response_text from webhook_events where id=${id} limit 1`;
+    return { claimed: false, responseText: (existing[0]?.response_text as string) || undefined };
+  } catch (error) {
+    if ((error as { code?: string }).code === "42P01") return { claimed: true };
+    throw error;
+  }
+}
+
+export async function completeWebhookEvent(id: string, responseText?: string) {
+  if (!sql) return;
+  try {
+    await sql`update webhook_events set response_text=${responseText ?? null},completed_at=now() where id=${id}`;
+  } catch (error) {
+    if ((error as { code?: string }).code !== "42P01") throw error;
+  }
+}
+
+export async function releaseWebhookEvent(id: string) {
+  if (!sql) return;
+  try {
+    await sql`delete from webhook_events where id=${id} and completed_at is null`;
+  } catch (error) {
+    if ((error as { code?: string }).code !== "42P01") throw error;
+  }
 }
 
 export { isDbEnabled };

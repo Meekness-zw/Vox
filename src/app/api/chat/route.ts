@@ -9,16 +9,17 @@ import { retrieveContext } from "@/lib/rag";
 import { getSession } from "@/lib/auth/session-cookies";
 import { buildConversation } from "@/lib/conversation";
 import { getAgentById, listAgents, upsertConversation } from "@/lib/repository";
+import { allowRequest, bodyTooLarge } from "@/lib/api-security";
 
 export const maxDuration = 30;
 
 export async function POST(req: Request) {
-  const {
-    messages,
-    agentId,
-    conversationId,
-  }: { messages: UIMessage[]; agentId?: string; conversationId?: string } =
-    await req.json();
+  if (bodyTooLarge(req, 96_000)) return Response.json({ error: "Request is too large." }, { status: 413 });
+  if (!(await allowRequest(req, "chat", 40))) return Response.json({ error: "Too many requests." }, { status: 429 });
+  let body: { messages?: UIMessage[]; agentId?: string; conversationId?: string };
+  try { body = await req.json(); }
+  catch { return Response.json({ error: "Invalid JSON body" }, { status: 400 }); }
+  const { messages, agentId, conversationId } = body;
 
   const session = await getSession();
 
@@ -31,12 +32,13 @@ export async function POST(req: Request) {
         (a) => a.type === "chat" && a.status === "active"
       )
     : (agentId && getAgent(agentId)) || agents[1];
-  agent ??= agents[1]; // last-resort fallback: demo chat concierge
+  if (!agent && !session) agent = agents[1];
+  if (!agent) return Response.json({ error: "Agent unavailable" }, { status: 404 });
 
   const workspaceId = session?.workspaceId ?? "ws_demo";
 
   // Flatten the UI messages into plain {role, content} for the shared brain.
-  const history: SimpleMessage[] = messages
+  const history: SimpleMessage[] = (Array.isArray(messages) ? messages : []).slice(-40)
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({
       role: m.role as "user" | "assistant",
@@ -46,10 +48,15 @@ export async function POST(req: Request) {
         .trim(),
     }))
     .filter((m) => m.content.length > 0);
+  if (!history.length || history.some((message) => message.content.length > 4_000)) {
+    return Response.json({ error: "Invalid conversation" }, { status: 400 });
+  }
 
   // Retrieve relevant knowledge for this turn (RAG), scoped to the workspace.
   const lastUser = [...history].reverse().find((m) => m.role === "user");
   const ctx = await retrieveContext(workspaceId, lastUser?.content ?? "");
+  const safeConversationId = conversationId && /^[a-zA-Z0-9_-]{1,100}$/.test(conversationId)
+    ? conversationId : undefined;
 
   // One resilient brain for both chat and voice: real model via the AI Gateway
   // when it's reachable, automatic knowledge-base fallback when it isn't (no
@@ -66,7 +73,7 @@ export async function POST(req: Request) {
           workspaceId,
           agentId: agent.id,
           channel: "chat",
-          conversationId: conversationId ? "cv_" + conversationId : undefined,
+          conversationId: safeConversationId ? "cv_" + safeConversationId : undefined,
           contactEmail: session.email,
         }
       : undefined
@@ -74,9 +81,9 @@ export async function POST(req: Request) {
 
   // Persist the conversation for authenticated workspaces so real chats show
   // up in the dashboard. The public marketing demo (no session) is not stored.
-  if (session && conversationId) {
+  if (session && safeConversationId) {
     const record = buildConversation({
-      id: "cv_" + conversationId,
+      id: "cv_" + safeConversationId,
       agentId: agent.id,
       channel: "chat",
       contact: session.email,
@@ -91,10 +98,7 @@ export async function POST(req: Request) {
     execute: async ({ writer }) => {
       const id = "msg_" + Date.now();
       writer.write({ type: "text-start", id });
-      for (const token of reply.split(/(\s+)/)) {
-        writer.write({ type: "text-delta", id, delta: token });
-        await new Promise((r) => setTimeout(r, 14));
-      }
+      writer.write({ type: "text-delta", id, delta: reply });
       writer.write({ type: "text-end", id });
     },
   });

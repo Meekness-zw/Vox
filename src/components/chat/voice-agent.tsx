@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Mic, Square, Volume2, Loader2, AlertCircle, Repeat } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,12 @@ type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 type Turn = { role: "user" | "agent"; text: string };
 type Status = "idle" | "listening" | "thinking" | "speaking";
 
+const subscribeToBrowserCapabilities = () => () => {};
+const browserSupportsVoice = () =>
+  ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) &&
+  "speechSynthesis" in window;
+const serverSupportsVoice = () => true;
+
 export function VoiceAgent({
   agentId = "ag_front_desk",
   agentName = "Micheal",
@@ -41,7 +47,11 @@ export function VoiceAgent({
   agentVoice?: string;
   greeting?: string;
 }) {
-  const [supported, setSupported] = useState<boolean | null>(null);
+  const supported = useSyncExternalStore(
+    subscribeToBrowserCapabilities,
+    browserSupportsVoice,
+    serverSupportsVoice
+  );
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [interim, setInterim] = useState("");
@@ -56,36 +66,14 @@ export function VoiceAgent({
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const startListeningRef = useRef<() => void>(() => {});
+  const handleUserSpeechRef = useRef<(text: string) => void>(() => {});
+  const endCallRef = useRef<() => void>(() => {});
+  const callGenerationRef = useRef(0);
 
-  turnsRef.current = turns;
-  handsFreeRef.current = handsFree;
-
-  useEffect(() => {
-    const ok =
-      typeof window !== "undefined" &&
-      ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) &&
-      "speechSynthesis" in window;
-    setSupported(ok);
-    if (ok) pickVoice();
-    return () => {
-      try {
-        recognitionRef.current?.abort();
-        window.speechSynthesis?.cancel();
-        audioRef.current?.pause();
-      } catch {}
-    };
-  }, []);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [turns, interim, status]);
-
-  function pickVoice() {
+  const pickVoice = useCallback(() => {
     const load = () => {
       const voices = window.speechSynthesis.getVoices();
-      // Rank the available voices so we use the most natural one the device has
-      // (e.g. macOS "Enhanced"/"Premium", Chrome "Google", Edge "Natural"
-      // voices) instead of the robotic default.
       const score = (v: SpeechSynthesisVoice) => {
         const n = v.name.toLowerCase();
         let s = 0;
@@ -93,24 +81,39 @@ export function VoiceAgent({
         if (/enhanced|premium/.test(n)) s += 90;
         if (/online|\(online\)/.test(n)) s += 50;
         if (/google/.test(n)) s += 60;
-        if (/\b(ava|samantha|allison|serena|zoe|jenny|aria|sonia|emma|nora|libby)\b/.test(n))
-          s += 40;
+        if (/\b(ava|samantha|allison|serena|zoe|jenny|aria|sonia|emma|nora|libby)\b/.test(n)) s += 40;
         if (v.lang === "en-US") s += 25;
         else if (v.lang.startsWith("en")) s += 12;
-        // Penalise the novelty / low-quality macOS voices.
-        if (/albert|bad news|bahh|bells|boing|bubbles|cellos|fred|jester|organ|trinoids|whisper|wobble|zarvox|junior|ralph|kathy|good news/.test(n))
-          s -= 200;
-        if (v.localService === false) s += 10; // network voices tend to be richer
+        if (/albert|bad news|bahh|bells|boing|bubbles|cellos|fred|jester|organ|trinoids|whisper|wobble|zarvox|junior|ralph|kathy|good news/.test(n)) s -= 200;
+        if (v.localService === false) s += 10;
         return s;
       };
-      const best = voices
+      voiceRef.current = voices
         .filter((v) => v.lang.startsWith("en"))
-        .sort((a, b) => score(b) - score(a))[0];
-      voiceRef.current = best ?? voices[0] ?? null;
+        .sort((a, b) => score(b) - score(a))[0] ?? voices[0] ?? null;
     };
     load();
     window.speechSynthesis.onvoiceschanged = load;
-  }
+  }, []);
+
+  useEffect(() => {
+    if (supported) pickVoice();
+    return () => {
+      try {
+        recognitionRef.current?.abort();
+        window.speechSynthesis?.cancel();
+        window.speechSynthesis.onvoiceschanged = null;
+        audioRef.current?.pause();
+      } catch {}
+    };
+  }, [pickVoice, supported]);
+
+  useEffect(() => { turnsRef.current = turns; }, [turns]);
+  useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [turns, interim, status]);
 
   const browserSpeak = useCallback((text: string, onDone: () => void) => {
     try {
@@ -146,6 +149,7 @@ export function VoiceAgent({
   /** Speak via neural TTS (human voice) when available; else browser voice. */
   const speak = useCallback(
     async (text: string, onDone: () => void) => {
+      const generation = callGenerationRef.current;
       try {
         const res = await fetch("/api/tts", {
           method: "POST",
@@ -154,6 +158,7 @@ export function VoiceAgent({
         });
         const ct = res.headers.get("content-type") ?? "";
         if (res.ok && ct.includes("audio")) {
+          if (generation !== callGenerationRef.current || !activeRef.current) return;
           const url = URL.createObjectURL(await res.blob());
           const audio = new Audio(url);
           audioRef.current = audio;
@@ -174,12 +179,14 @@ export function VoiceAgent({
       } catch {
         /* fall through to browser voice */
       }
+      if (generation !== callGenerationRef.current || !activeRef.current) return;
       browserSpeak(text, onDone);
     },
     [browserSpeak, agentVoice]
   );
 
   const stopSpeaking = useCallback(() => {
+    callGenerationRef.current += 1;
     try {
       window.speechSynthesis.cancel();
       if (audioRef.current) {
@@ -206,6 +213,7 @@ export function VoiceAgent({
     let finalText = "";
     let recorder: MediaRecorder | null = null;
     let microphoneStream: MediaStream | null = null;
+    let recognitionEnded = false;
     const recordedChunks: Blob[] = [];
     setInterim("");
     setStatus("listening");
@@ -222,12 +230,14 @@ export function VoiceAgent({
     rec.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         setError("Microphone access was blocked. Allow mic access and try again.");
-        endCall();
+        endCallRef.current();
       } else if (e.error !== "no-speech" && e.error !== "aborted") {
         setError("Voice error: " + e.error);
       }
     };
     rec.onend = async () => {
+      recognitionEnded = true;
+      if (recognitionRef.current === rec) recognitionRef.current = null;
       setInterim("");
       let text = finalText.trim();
       if (recorder && recorder.state !== "inactive") {
@@ -252,10 +262,10 @@ export function VoiceAgent({
         }
       }
       if (text) {
-        void handleUserSpeech(text);
+        handleUserSpeechRef.current(text);
       } else if (activeRef.current && handsFreeRef.current) {
         // Heard nothing; keep listening so the user can take their time.
-        startListening();
+        startListeningRef.current();
       } else if (activeRef.current) {
         setStatus("idle");
       }
@@ -264,6 +274,10 @@ export function VoiceAgent({
     void (async () => {
       try {
         microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (recognitionEnded || !activeRef.current) {
+          microphoneStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         recorder = new MediaRecorder(microphoneStream);
         recorder.ondataavailable = (event) => {
           if (event.data.size) recordedChunks.push(event.data);
@@ -278,11 +292,11 @@ export function VoiceAgent({
         /* already started */
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleUserSpeech = useCallback(
     async (text: string) => {
+      const generation = callGenerationRef.current;
       const userTurn: Turn = { role: "user", text };
       const next = [...turnsRef.current, userTurn];
       setTurns(next);
@@ -301,21 +315,27 @@ export function VoiceAgent({
           }),
         });
         const data = await res.json();
+        if (generation !== callGenerationRef.current || !activeRef.current) return;
         const reply: string = data.reply ?? "Sorry, I didn't catch that.";
         setTurns((t) => [...t, { role: "agent", text: reply }]);
         speak(reply, () => {
-          if (activeRef.current && handsFreeRef.current) startListening();
+          if (activeRef.current && handsFreeRef.current) startListeningRef.current();
           else setStatus("idle");
         });
       } catch {
+        if (generation !== callGenerationRef.current || !activeRef.current) return;
         setError("Couldn't reach the agent. Please try again.");
         setStatus("idle");
       }
     },
-    [agentId, speak, startListening]
+    [agentId, speak]
   );
 
+  useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
+  useEffect(() => { handleUserSpeechRef.current = handleUserSpeech; }, [handleUserSpeech]);
+
   const startCall = useCallback(() => {
+    callGenerationRef.current += 1;
     setError(null);
     setTurns([]);
     setActive(true);
@@ -328,6 +348,7 @@ export function VoiceAgent({
   }, [greeting, speak, startListening]);
 
   const endCall = useCallback(() => {
+    callGenerationRef.current += 1;
     activeRef.current = false;
     setActive(false);
     setStatus("idle");
@@ -339,6 +360,8 @@ export function VoiceAgent({
       audioRef.current = null;
     } catch {}
   }, []);
+
+  useEffect(() => { endCallRef.current = endCall; }, [endCall]);
 
   /* ---- render ------------------------------------------------------------- */
 

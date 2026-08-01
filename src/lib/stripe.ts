@@ -1,4 +1,4 @@
-import { updateBotRequest, updateWorkspaceSubscription } from "@/lib/repository";
+import { getBotRequest, updateBotRequest, updateWorkspaceSubscription } from "@/lib/repository";
 
 type CheckoutSession = {
   payment_status?: string;
@@ -8,6 +8,37 @@ type CheckoutSession = {
   client_reference_id?: string;
   metadata?: Record<string, string>;
 };
+
+export type StripeInvoiceSummary = {
+  id: string;
+  date: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  pdfUrl?: string;
+  hostedUrl?: string;
+};
+
+export async function listStripeInvoices(customerId?: string): Promise<StripeInvoiceSummary[]> {
+  const secret = process.env.STRIPE_SECRET_KEY;
+  if (!secret || !customerId?.startsWith("cus_")) return [];
+  const params = new URLSearchParams({ customer: customerId, limit: "12" });
+  const response = await fetch(`https://api.stripe.com/v1/invoices?${params}`, {
+    headers: { Authorization: `Bearer ${secret}` },
+    cache: "no-store",
+  });
+  if (!response.ok) return [];
+  const result = await response.json() as { data?: Array<Record<string, unknown>> };
+  return (result.data ?? []).map((invoice) => ({
+    id: String(invoice.number || invoice.id),
+    date: new Date(Number(invoice.created ?? 0) * 1000).toISOString(),
+    amountCents: Number(invoice.amount_paid ?? invoice.amount_due ?? 0),
+    currency: String(invoice.currency ?? "usd").toUpperCase(),
+    status: String(invoice.status ?? "unknown"),
+    pdfUrl: typeof invoice.invoice_pdf === "string" ? invoice.invoice_pdf : undefined,
+    hostedUrl: typeof invoice.hosted_invoice_url === "string" ? invoice.hosted_invoice_url : undefined,
+  }));
+}
 
 /** Confirm a returned Checkout session server-side; never trusts URL parameters alone. */
 export async function confirmStripeCheckout(sessionId: string, workspaceId: string) {
@@ -40,11 +71,15 @@ export async function confirmStripeCheckout(sessionId: string, workspaceId: stri
     stripeSubscriptionId: session.subscription,
   });
   if (session.metadata?.bot_request_id) {
-    await updateBotRequest({
-      id: session.metadata.bot_request_id,
-      status: "submitted",
-      adminNotes: "Payment confirmed. Your custom bot is now in the Vox review queue.",
-    });
+    const request = await getBotRequest(session.metadata.bot_request_id, workspaceId);
+    if (request?.status === "payment_required") {
+      await updateBotRequest({
+        id: session.metadata.bot_request_id,
+        workspaceId,
+        status: "submitted",
+        adminNotes: "Payment confirmed. Your custom bot is now in the Vox review queue.",
+      });
+    }
   }
   return true;
 }

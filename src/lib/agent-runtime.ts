@@ -151,7 +151,9 @@ function lineItemsArg(args: Record<string, unknown>) {
     const description = textArg(item, "description", true)!;
     const quantity = Number(item.quantity ?? 1);
     const unitPriceCents = Number(item.unitPriceCents);
-    if (!(quantity > 0) || !(unitPriceCents >= 0)) {
+    if (!Number.isFinite(quantity) || !Number.isFinite(unitPriceCents) ||
+        !(quantity > 0) || quantity > 1_000_000 ||
+        !(unitPriceCents >= 0) || unitPriceCents > 100_000_000_00) {
       throw new Error("Invalid line item quantity or price");
     }
     return {
@@ -234,7 +236,7 @@ async function executePythonAction(action: PythonBotAction, ctx: ToolContext) {
       contactPhone: textArg(args, "contactPhone") ?? ctx.contactPhone,
       contactAddress: textArg(args, "contactAddress"),
       lineItems: lineItemsArg(args),
-      taxRatePercent: Math.max(0, Number(args.taxRatePercent ?? 0)),
+      taxRatePercent: Math.min(100, Math.max(0, Number(args.taxRatePercent ?? 0))),
       notes: textArg(args, "notes"),
       dueDate: textArg(args, "dueDate"),
       metadata: {

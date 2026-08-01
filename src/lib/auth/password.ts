@@ -8,6 +8,7 @@ export function hashPassword(password: string): string {
 }
 
 export function verifyPassword(password: string, stored: string): boolean {
+  if (password.length > 128) return false;
   const [salt, hash] = stored.split(":");
   if (!salt || !hash) return false;
   const derived = scryptSync(password, salt, 64);

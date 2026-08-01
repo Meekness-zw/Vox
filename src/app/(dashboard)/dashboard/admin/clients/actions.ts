@@ -12,8 +12,10 @@ import {
   releasePaidBotRequests,
   updateWorkspaceSubscription,
   upsertCompanyProfile,
+  workspaceExists,
 } from "@/lib/repository";
 import type { BotRequest, SubscriptionStatus } from "@/lib/types";
+import { isValidBusinessSchedule, isValidTimezone } from "@/lib/business-schedule";
 
 async function requireAdmin() {
   const session = await requireSession();
@@ -54,6 +56,10 @@ export async function updateClientSubscription(formData: FormData) {
   const status = String(formData.get("status") ?? "free") as SubscriptionStatus;
   const due = String(formData.get("dueAt") ?? "");
   if (!workspaceId) throw new Error("Workspace is required.");
+  if (!["free", "starter", "growth", "pro", "enterprise"].includes(plan) ||
+      !["free", "active", "past_due", "cancelled"].includes(status)) {
+    throw new Error("Invalid subscription details.");
+  }
   await updateWorkspaceSubscription({
     workspaceId,
     plan,
@@ -70,15 +76,20 @@ export async function createManagedBotRequest(formData: FormData) {
   if (!workspaceId || !value("businessName") || !value("services")) {
     throw new Error("Client, business name, and services are required.");
   }
+  if (!(await workspaceExists(workspaceId))) throw new Error("Client workspace not found.");
   const subscription = await getWorkspaceSubscription(workspaceId);
   let businessSchedule: BotRequest["businessSchedule"] = [];
   try { businessSchedule = JSON.parse(value("businessSchedule")); } catch {}
   const timezone = value("timezone") || "Africa/Harare";
-  try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch {
+  if (!isValidTimezone(timezone)) {
     throw new Error("Select a valid business timezone.");
   }
-  if (!Array.isArray(businessSchedule) || businessSchedule.length !== 7) {
+  if (!isValidBusinessSchedule(businessSchedule)) {
     throw new Error("A complete business schedule is required.");
+  }
+  const channels = formData.getAll("channels").map(String);
+  if (!channels.length || channels.some((channel) => !["WhatsApp", "Website chat", "Phone calls", "SMS"].includes(channel))) {
+    throw new Error("Select at least one valid channel.");
   }
   const now = new Date().toISOString();
   const request: BotRequest = {
@@ -94,7 +105,7 @@ export async function createManagedBotRequest(formData: FormData) {
     escalation: value("escalation") || "Collect contact details for a human follow-up.",
     timezone,
     businessSchedule,
-    channels: formData.getAll("channels").map(String),
+    channels,
     contactName: "Vox Admin",
     contactEmail: value("clientEmail"),
     status: subscription.status === "active" ? "submitted" : "payment_required",

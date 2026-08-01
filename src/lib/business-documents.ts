@@ -4,13 +4,13 @@ import {
   getWorkspaceName,
   insertBusinessDocument,
 } from "@/lib/repository";
-import { initSchema, isDbEnabled } from "@/lib/db";
 import type {
   BusinessDocument,
   BusinessDocumentType,
   DocumentLineItem,
   DocumentTemplate,
 } from "@/lib/types";
+import { assertPublicUrl } from "@/lib/public-url";
 
 const prefixes: Record<BusinessDocumentType, string> = {
   invoice: "INV",
@@ -67,21 +67,32 @@ export async function createBusinessDocument(opts: {
   dueDate?: string;
   metadata?: Record<string, string>;
 }): Promise<BusinessDocument> {
-  if (isDbEnabled) await initSchema();
+  if (!Object.hasOwn(prefixes, opts.type)) throw new Error("Unsupported document type");
+  if (!opts.contactName.trim() || opts.contactName.length > 200) throw new Error("Enter a valid customer name");
+  if (!opts.lineItems.length || opts.lineItems.length > 100) throw new Error("Add between 1 and 100 line items");
+  for (const item of opts.lineItems) {
+    if (!item.description.trim() || item.description.length > 500 ||
+        !Number.isFinite(item.quantity) || item.quantity <= 0 || item.quantity > 1_000_000 ||
+        !Number.isSafeInteger(item.unitPriceCents) || item.unitPriceCents < 0 || item.unitPriceCents > 100_000_000_00) {
+      throw new Error("A document line item contains an invalid description, quantity, or price");
+    }
+  }
+  const taxRate = opts.taxRatePercent ?? 0;
+  if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) throw new Error("Tax rate must be between 0 and 100");
   const now = new Date();
   const subtotalCents = opts.lineItems.reduce(
     (sum, item) => sum + item.quantity * item.unitPriceCents,
     0
   );
   const taxCents = Math.round(
-    subtotalCents * Math.max(0, opts.taxRatePercent ?? 0) / 100
+    subtotalCents * taxRate / 100
   );
   const document: BusinessDocument = {
     id: "doc_" + crypto.randomUUID(),
     agentId: opts.agentId,
     conversationId: opts.conversationId,
     type: opts.type,
-    number: `${prefixes[opts.type]}-${now.getFullYear()}-${String(now.getTime()).slice(-7)}`,
+    number: `${prefixes[opts.type]}-${now.getFullYear()}-${String(now.getTime()).slice(-7)}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`,
     status: opts.type === "receipt" ? "paid" : "issued",
     contactName: opts.contactName,
     contactEmail: opts.contactEmail,
@@ -142,13 +153,7 @@ export async function renderBusinessDocumentPdf(
   let logo: Awaited<ReturnType<typeof pdf.embedPng>> | undefined;
   if (template.logoUrl) {
     try {
-      const url = new URL(template.logoUrl);
-      const blockedHost =
-        url.hostname === "localhost" ||
-        url.hostname === "127.0.0.1" ||
-        url.hostname === "::1" ||
-        /^10\.|^192\.168\.|^169\.254\.|^172\.(1[6-9]|2\d|3[01])\./.test(url.hostname);
-      if (url.protocol !== "https:" || blockedHost) throw new Error("Unsafe logo URL");
+      const url = await assertPublicUrl(template.logoUrl, true);
       const response = await fetch(url, {
         redirect: "error",
         signal: AbortSignal.timeout(4_000),

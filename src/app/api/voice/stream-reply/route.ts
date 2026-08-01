@@ -25,8 +25,8 @@ export async function POST(req: Request) {
     const profile = await getCompanyProfile(workspaceId);
     if (profile?.transferPhone) {
       const sid = process.env.TWILIO_ACCOUNT_SID, token = process.env.TWILIO_AUTH_TOKEN;
-      if (sid && token) {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://vox-rust-six.vercel.app";
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+      if (sid && token && appUrl) {
         const callback = `${appUrl}/api/voice/transfer-status?workspaceId=${encodeURIComponent(workspaceId)}&callSid=${encodeURIComponent(callSid)}`;
         const xml = `<Response><Say>Please hold while I connect you.</Say><Dial action="${callback.replaceAll("&", "&amp;")}" method="POST">${profile.transferPhone}</Dial></Response>`;
         const transfer = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls/${callSid}.json`, {

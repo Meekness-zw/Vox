@@ -49,6 +49,24 @@ async function hmac(data: string) {
   return b64url(sig);
 }
 
+function signaturesMatch(expected: string, provided: string) {
+  try {
+    const expectedBytes = fromB64url(expected);
+    const providedBytes = fromB64url(provided);
+    if (expectedBytes.length !== providedBytes.length) return false;
+
+    // Keep comparison work independent of the first differing byte. Web Crypto
+    // is used here because this module also runs in the Next.js edge proxy.
+    let difference = 0;
+    for (let index = 0; index < expectedBytes.length; index += 1) {
+      difference |= expectedBytes[index] ^ providedBytes[index];
+    }
+    return difference === 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Create a signed, tamper-evident session token (stateless). */
 export async function signSession(
   payload: Omit<SessionPayload, "exp">
@@ -68,12 +86,19 @@ export async function verifySession(
   if (!token) return null;
   const [body, sig] = token.split(".");
   if (!body || !sig) return null;
-  if ((await hmac(body)) !== sig) return null;
+  if (!signaturesMatch(await hmac(body), sig)) return null;
   try {
     const payload = JSON.parse(
       new TextDecoder().decode(fromB64url(body))
     ) as SessionPayload;
-    if (payload.exp * 1000 < Date.now()) return null;
+    if (
+      typeof payload.userId !== "string" ||
+      typeof payload.workspaceId !== "string" ||
+      typeof payload.email !== "string" ||
+      typeof payload.name !== "string" ||
+      typeof payload.exp !== "number" ||
+      payload.exp * 1000 < Date.now()
+    ) return null;
     return payload;
   } catch {
     return null;

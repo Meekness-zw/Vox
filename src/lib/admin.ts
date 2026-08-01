@@ -1,5 +1,6 @@
 export function isVoxAdmin(email: string): boolean {
-  const configured = (process.env.VOX_ADMIN_EMAILS ?? "demo@vox.ai")
+  const fallback = process.env.NODE_ENV === "production" ? "" : "demo@vox.ai";
+  const configured = (process.env.VOX_ADMIN_EMAILS ?? fallback)
     .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);

@@ -2,6 +2,8 @@ import { createHmac } from "node:crypto";
 import { getAgentById, getRoutingForNumber } from "@/lib/repository";
 import { connectMediaStream, sayAndGather, startSession } from "@/lib/voice/twiml";
 import { formDataToParams, isValidTwilioRequest, publicWebhookUrl } from "@/lib/twilio-signature";
+import { isDbEnabled } from "@/lib/db";
+import { resolveElevenLabsVoiceId } from "@/lib/voice/elevenlabs-voices";
 
 export const maxDuration = 30;
 
@@ -33,10 +35,10 @@ export async function POST(req: Request) {
   const to = String(form.get("To") ?? "unknown");
 
   const route = await getRoutingForNumber(to, "voice");
-  const workspaceId = route?.workspaceId ?? "ws_demo";
+  const workspaceId = route?.workspaceId ?? (isDbEnabled ? "" : "ws_demo");
   const agentId = url.searchParams.get("agentId") ?? route?.agentId;
 
-  const agent = agentId ? await getAgentById(agentId, workspaceId) : undefined;
+  const agent = workspaceId && agentId ? await getAgentById(agentId, workspaceId) : undefined;
   if (!agent) {
     return sayAndGather(
       "Sorry, this number isn't set up yet. Please try again later.",
@@ -46,8 +48,11 @@ export async function POST(req: Request) {
 
   await startSession(callSid, agent.id, from, workspaceId);
 
-  const streamUrl = process.env.VOX_MEDIA_STREAM_URL ??
-    "wss://vox-production-12ac.up.railway.app/v1/twilio-media";
+  const botServiceUrl = process.env.VOX_BOT_SERVICE_URL?.trim();
+  const derivedStreamUrl = botServiceUrl
+    ? new URL("/v1/twilio-media", botServiceUrl.replace(/^http/, "ws")).toString()
+    : "";
+  const streamUrl = process.env.VOX_MEDIA_STREAM_URL?.trim() || derivedStreamUrl;
   const serviceToken = process.env.VOX_BOT_SERVICE_TOKEN;
   if (serviceToken && streamUrl) {
     const expires = String(Math.floor(Date.now() / 1000) + 300);
@@ -56,6 +61,7 @@ export async function POST(req: Request) {
     return connectMediaStream(streamUrl, {
       callSid, workspaceId, agentId: agent.id, caller: from,
       greeting: agent.greeting.slice(0, 400), language: agent.language.slice(0, 100),
+      voiceId: resolveElevenLabsVoiceId(agent.voice),
       expires, token,
     });
   }

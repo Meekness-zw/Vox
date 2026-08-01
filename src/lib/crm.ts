@@ -1,5 +1,6 @@
 import { decryptSecret } from "@/lib/token-crypto";
 import { createCrmDelivery, finishCrmDelivery, getCrmConnection } from "@/lib/repository";
+import { assertPublicUrl } from "@/lib/public-url";
 
 export async function syncCrmLead(workspaceId: string, lead: Record<string, unknown>) {
   const connection = await getCrmConnection(workspaceId);
@@ -12,7 +13,8 @@ export async function syncCrmLead(workspaceId: string, lead: Record<string, unkn
   }
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const response = await fetch(String(connection.webhook_url), {
+      const webhookUrl = await assertPublicUrl(String(connection.webhook_url), true);
+      const response = await fetch(webhookUrl, {
         method: "POST", headers, body: JSON.stringify(payload),
         signal: AbortSignal.timeout(8000),
       });

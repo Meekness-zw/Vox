@@ -22,13 +22,25 @@ export async function createInvoice(opts: {
   notes?: string;
   businessName?: string;
 }): Promise<{ invoice: ClientInvoice; emailed: boolean }> {
+  if (!opts.contactName.trim() || opts.contactName.length > 200) throw new Error("Enter a valid customer name");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(opts.contactEmail) || opts.contactEmail.length > 320) {
+    throw new Error("Enter a valid customer email");
+  }
+  if (!opts.lineItems.length || opts.lineItems.length > 100) throw new Error("Add between 1 and 100 line items");
+  for (const item of opts.lineItems) {
+    if (!item.description.trim() || item.description.length > 500 ||
+        !Number.isFinite(item.quantity) || item.quantity <= 0 || item.quantity > 1_000_000 ||
+        !Number.isSafeInteger(item.unitPriceCents) || item.unitPriceCents < 0 || item.unitPriceCents > 100_000_000_00) {
+      throw new Error("An invoice line item contains an invalid description, quantity, or price");
+    }
+  }
   const subtotalCents = opts.lineItems.reduce(
     (sum, li) => sum + li.quantity * li.unitPriceCents,
     0
   );
 
   const invoice: ClientInvoice = {
-    id: "inv_" + Math.random().toString(36).slice(2, 10),
+    id: "inv_" + crypto.randomUUID(),
     agentId: opts.agentId,
     conversationId: opts.conversationId,
     contactName: opts.contactName,

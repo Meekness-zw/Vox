@@ -20,27 +20,27 @@ from pydantic import BaseModel, Field
 
 
 class AgentConfig(BaseModel):
-    id: str
-    name: str
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=120)
     type: Literal["voice", "chat"]
-    language: str
-    personality: str
-    greeting: str
-    business_hours: str = Field(alias="businessHours")
-    escalation: str
-    system_prompt: str = Field(alias="systemPrompt")
+    language: str = Field(max_length=200)
+    personality: str = Field(max_length=1000)
+    greeting: str = Field(max_length=2000)
+    business_hours: str = Field(alias="businessHours", max_length=1000)
+    escalation: str = Field(max_length=2000)
+    system_prompt: str = Field(alias="systemPrompt", max_length=20_000)
 
 
 class Message(BaseModel):
     role: Literal["user", "assistant"]
-    content: str
+    content: str = Field(min_length=1, max_length=4000)
 
 
 class ReplyRequest(BaseModel):
-    workspace_id: str
+    workspace_id: str = Field(min_length=1, max_length=100)
     agent: AgentConfig
-    messages: list[Message]
-    knowledge: str = ""
+    messages: list[Message] = Field(min_length=1, max_length=40)
+    knowledge: str = Field(default="", max_length=50_000)
     channel: Literal["voice", "chat", "whatsapp", "sms"] = "chat"
 
 
@@ -62,14 +62,14 @@ class ReplyResponse(BaseModel):
 
 
 class BuildRequest(BaseModel):
-    business_name: str
-    industry: str
-    description: str
-    services: str
-    business_hours: str
-    languages: str
-    tone: str
-    escalation: str
+    business_name: str = Field(min_length=1, max_length=200)
+    industry: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=10_000)
+    services: str = Field(default="", max_length=20_000)
+    business_hours: str = Field(default="", max_length=2_000)
+    languages: str = Field(default="English", max_length=500)
+    tone: str = Field(default="friendly, professional, and concise", max_length=1_000)
+    escalation: str = Field(default="", max_length=2_000)
 
 
 class BuildResponse(BaseModel):
@@ -81,6 +81,48 @@ class BuildResponse(BaseModel):
 
 
 app = FastAPI(title="Vox Bot Engine", version="1.1.0")
+
+
+class RequestSafetyMiddleware:
+    """Reject malformed Host values and oversized HTTP bodies before parsing."""
+
+    def __init__(self, application: Any, maximum_body_bytes: int = 2_000_000) -> None:
+        self.application = application
+        self.maximum_body_bytes = maximum_body_bytes
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.application(scope, receive, send)
+            return
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        host = headers.get(b"host", b"")
+        if not host or re.search(rb"[\\/\x00-\x20]", host):
+            await send({"type": "http.response.start", "status": 400, "headers": []})
+            await send({"type": "http.response.body", "body": b"Invalid Host header"})
+            return
+        try:
+            declared = int(headers.get(b"content-length", b"0"))
+        except ValueError:
+            declared = self.maximum_body_bytes + 1
+        if declared > self.maximum_body_bytes:
+            await send({"type": "http.response.start", "status": 413, "headers": []})
+            await send({"type": "http.response.body", "body": b"Request body too large"})
+            return
+        consumed = 0
+
+        async def limited_receive() -> dict[str, Any]:
+            nonlocal consumed
+            message = await receive()
+            if message.get("type") == "http.request":
+                consumed += len(message.get("body", b""))
+                if consumed > self.maximum_body_bytes:
+                    raise HTTPException(status_code=413, detail="Request body too large")
+            return message
+
+        await self.application(scope, limited_receive, send)
+
+
+app.add_middleware(RequestSafetyMiddleware)
 http_client = httpx.AsyncClient(
     timeout=httpx.Timeout(12.0, connect=3.0),
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
@@ -94,7 +136,16 @@ async def close_http_client() -> None:
 
 def authorize(value: Optional[str]) -> None:
     expected = os.getenv("VOX_BOT_SERVICE_TOKEN", "")
-    if expected and value != f"Bearer {expected}":
+    if not expected:
+        if (
+            os.getenv("RAILWAY_ENVIRONMENT")
+            or os.getenv("RAILWAY_ENVIRONMENT_ID")
+            or os.getenv("RAILWAY_ENVIRONMENT_NAME")
+            or os.getenv("ENVIRONMENT", "").lower() == "production"
+        ):
+            raise HTTPException(status_code=503, detail="Service authentication is not configured")
+        return
+    if not hmac.compare_digest(value or "", f"Bearer {expected}"):
         raise HTTPException(status_code=401, detail="Invalid service token")
 
 
@@ -286,19 +337,33 @@ async def model_reply(req: ReplyRequest) -> Optional[ReplyResponse]:
 
 def offline_reply(req: ReplyRequest) -> str:
     text = next((m.content for m in reversed(req.messages) if m.role == "user"), "").lower()
-    knowledge = re.sub(r"\s+", " ", req.knowledge).strip()
     shona = req.agent.language.startswith("CALL_LANGUAGE: Shona")
+    if any(word in text for word in ("hello", "hi", "hey", "mhoro", "makadii")):
+        return req.agent.greeting
     if any(word in text for word in ("human", "person", "manager")):
         return f"Hongu. {req.agent.escalation}" if shona else f"Of course. {req.agent.escalation}"
-    if knowledge:
-        snippet = knowledge[:420].rsplit(" ", 1)[0]
-        return f"Maererano neruzivo rwebhizinesi: {snippet}" if shona else f"Based on our business information: {snippet}"
-    if any(word in text for word in ("hello", "hi", "hey")):
-        return req.agent.greeting
+    topic_words = {
+        "hours": ("hour", "open", "close", "nguva", "vhura", "vhar"),
+        "services": ("service", "offer", "provide", "sevhisi", "mabasa"),
+        "pricing": ("price", "cost", "fee", "how much", "mutengo", "marii"),
+        "location": ("where", "location", "address", "kupi", "kero"),
+    }
+    requested_topics = {
+        topic for topic, words in topic_words.items() if any(word in text for word in words)
+    }
+    matching_lines = []
+    for raw_line in req.knowledge.splitlines():
+        line = raw_line.strip()
+        heading = line.split(":", 1)[0].lower()
+        if any(topic in heading for topic in requested_topics):
+            matching_lines.append(line)
+    if matching_lines:
+        facts = " ".join(matching_lines[:3])[:500]
+        return f"Maererano neruzivo rwebhizinesi: {facts}" if shona else facts
     return (
-        "Handina ruzivo irworwo pari zvino. Ndinogona kutora mashoko enyu kuti mumwe wechikwata akubate."
+        "Pane dambudziko rekubatanidza mubatsiri wedu pari zvino. Ndinogona kukubatanidzai nemunhu wechikwata."
         if shona else
-        "I don't have that detail yet. I can take your contact information so a team member can follow up."
+        "I'm having trouble reaching the assistant right now. I can connect you with a team member."
     )
 
 
@@ -376,10 +441,9 @@ def valid_transcript(text: str) -> bool:
     return not any(phrase in normalized for phrase in hallucinated_prompts)
 
 
-async def transcribe_mulaw(audio: bytes, language_mode: str = "auto") -> str:
-    key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not key or not audio:
-        return ""
+async def transcribe_mulaw(audio: bytes, language_mode: str = "auto") -> tuple[str, str]:
+    if not audio:
+        return "", ""
     pcm = audioop.ulaw2lin(audio, 2)
     wav = io.BytesIO()
     with wave.open(wav, "wb") as output:
@@ -387,6 +451,28 @@ async def transcribe_mulaw(audio: bytes, language_mode: str = "auto") -> str:
         output.setsampwidth(2)
         output.setframerate(8000)
         output.writeframes(pcm)
+    wav_bytes = wav.getvalue()
+    eleven_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if eleven_key:
+        response = await http_client.post(
+            "https://api.elevenlabs.io/v1/speech-to-text",
+            headers={"xi-api-key": eleven_key},
+            files={"file": ("call.wav", wav_bytes, "audio/wav")},
+            data={
+                "model_id": os.getenv("ELEVENLABS_STT_MODEL", "scribe_v2"),
+                "tag_audio_events": "false",
+                "diarize": "false",
+            },
+        )
+        response.raise_for_status()
+        result = response.json()
+        text = (result.get("text") or "").strip()
+        detected = str(result.get("language_code") or "").lower()
+        return (text, detected) if valid_transcript(text) else ("", "")
+
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not key:
+        return "", ""
     data = {"model": os.getenv("VOX_STT_MODEL", "gpt-4o-mini-transcribe")}
     if language_mode == "shona":
         data["language"] = "sn"
@@ -395,17 +481,21 @@ async def transcribe_mulaw(audio: bytes, language_mode: str = "auto") -> str:
     response = await http_client.post(
         "https://api.openai.com/v1/audio/transcriptions",
         headers={"Authorization": f"Bearer {key}"},
-        files={"file": ("call.wav", wav.getvalue(), "audio/wav")},
+        files={"file": ("call.wav", wav_bytes, "audio/wav")},
         data=data,
     )
     response.raise_for_status()
-    text = (response.json().get("text") or "").strip()
-    return text if valid_transcript(text) else ""
+    result = response.json()
+    text = (result.get("text") or "").strip()
+    detected = str(result.get("language") or result.get("language_code") or "").lower()
+    return (text, detected) if valid_transcript(text) else ("", "")
 
 
-async def speak_to_twilio(websocket: WebSocket, stream_sid: str, text: str) -> None:
+async def speak_to_twilio(
+    websocket: WebSocket, stream_sid: str, text: str, voice_id: str = ""
+) -> None:
     key = os.getenv("ELEVENLABS_API_KEY", "").strip()
-    voice_id = os.getenv("ELEVENLABS_MICHEAL_VOICE_ID", "").strip() or "YPtbPhafrxFTDAeaPP4w"
+    voice_id = voice_id.strip() or os.getenv("ELEVENLABS_MICHEAL_VOICE_ID", "").strip() or "YPtbPhafrxFTDAeaPP4w"
     if not key or not text:
         return
     url = (
@@ -434,7 +524,9 @@ async def streamed_bot_reply(
     params: dict[str, str], messages: list[dict[str, str]], started_at: str,
     language_mode: str = "auto",
 ) -> str:
-    app_url = os.getenv("VOX_APP_URL", "https://vox-rust-six.vercel.app").rstrip("/")
+    app_url = os.getenv("VOX_APP_URL", "").strip().rstrip("/")
+    if not app_url:
+        raise RuntimeError("VOX_APP_URL is required for live call reasoning")
     response = await http_client.post(
         f"{app_url}/api/voice/stream-reply",
         headers={"Authorization": f"Bearer {os.getenv('VOX_BOT_SERVICE_TOKEN', '')}"},
@@ -461,8 +553,49 @@ async def twilio_media(websocket: WebSocket) -> None:
     voice_candidate_chunks = 0
     pre_roll: deque[bytes] = deque(maxlen=10)
     playback_task: Optional[asyncio.Task[None]] = None
+    turn_task: Optional[asyncio.Task[None]] = None
     language_mode = "auto"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    async def process_utterance(utterance: bytes) -> None:
+        nonlocal language_mode, playback_task
+        try:
+            transcript, detected_language = await transcribe_mulaw(utterance, language_mode)
+            if not transcript:
+                return
+            if language_mode == "auto" and detected_language in {"sn", "sna", "shona"}:
+                language_mode = "shona"
+            else:
+                language_mode = choose_call_language(transcript, language_mode)
+            messages.append({"role": "user", "content": transcript})
+            reply_text = await streamed_bot_reply(params, messages, started_at, language_mode)
+            if not reply_text:
+                reply_text = (
+                    "Pamusoroi, handina kukwanisa kupindura izvozvi. Ndapota edzai zvakare."
+                    if language_mode == "shona" else
+                    "Sorry, I couldn't respond just now. Please try that again."
+                )
+            messages.append({"role": "assistant", "content": reply_text})
+            playback_task = asyncio.create_task(
+                speak_to_twilio(
+                    websocket, stream_sid, reply_text, params.get("voiceId", "")
+                )
+            )
+            playback_task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+        except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError):
+            apology = (
+                "Pamusoroi, pane dambudziko. Ndapota edzai zvakare."
+                if language_mode == "shona" else
+                "Sorry, there was a connection problem. Please try that again."
+            )
+            playback_task = asyncio.create_task(
+                speak_to_twilio(websocket, stream_sid, apology, params.get("voiceId", ""))
+            )
+            playback_task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
     try:
         while True:
             event = await websocket.receive_json()
@@ -477,13 +610,17 @@ async def twilio_media(websocket: WebSocket) -> None:
                 language_mode = initial_language_mode(params.get("language", ""))
                 messages.append({"role": "assistant", "content": greeting})
                 playback_task = asyncio.create_task(
-                    speak_to_twilio(websocket, stream_sid, greeting)
+                    speak_to_twilio(websocket, stream_sid, greeting, params.get("voiceId", ""))
                 )
                 playback_task.add_done_callback(
                     lambda task: None if task.cancelled() else task.exception()
                 )
             elif kind == "media" and params:
                 chunk = base64.b64decode(event["media"]["payload"])
+                # Keep draining Twilio while STT/the model is working. Discard
+                # those frames so delayed audio cannot become a phantom turn.
+                if turn_task and not turn_task.done():
+                    continue
                 rms = audioop.rms(audioop.ulaw2lin(chunk, 2), 2)
                 if not speaking:
                     pre_roll.append(chunk)
@@ -514,21 +651,10 @@ async def twilio_media(websocket: WebSocket) -> None:
                     voiced_chunks = 0
                     if not has_enough_speech:
                         continue
-                    transcript = await transcribe_mulaw(utterance, language_mode)
-                    if transcript:
-                        language_mode = choose_call_language(transcript, language_mode)
-                        messages.append({"role": "user", "content": transcript})
-                        reply_text = await streamed_bot_reply(
-                            params, messages, started_at, language_mode
-                        )
-                        if reply_text:
-                            messages.append({"role": "assistant", "content": reply_text})
-                            playback_task = asyncio.create_task(
-                                speak_to_twilio(websocket, stream_sid, reply_text)
-                            )
-                            playback_task.add_done_callback(
-                                lambda task: None if task.cancelled() else task.exception()
-                            )
+                    turn_task = asyncio.create_task(process_utterance(utterance))
+                    turn_task.add_done_callback(
+                        lambda task: None if task.cancelled() else task.exception()
+                    )
             elif kind == "stop":
                 break
     except (WebSocketDisconnect, httpx.HTTPError, KeyError, ValueError):
@@ -536,6 +662,8 @@ async def twilio_media(websocket: WebSocket) -> None:
     finally:
         if playback_task and not playback_task.done():
             playback_task.cancel()
+        if turn_task and not turn_task.done():
+            turn_task.cancel()
 
 
 @app.post("/v1/reply", response_model=ReplyResponse)

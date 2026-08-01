@@ -16,6 +16,7 @@ import {
   endSession,
 } from "@/lib/voice/twiml";
 import { formDataToParams, isValidTwilioRequest, publicWebhookUrl } from "@/lib/twilio-signature";
+import { isDbEnabled } from "@/lib/db";
 
 export const maxDuration = 30;
 
@@ -48,8 +49,11 @@ export async function POST(req: Request) {
   if (!session) {
     // Session lost (e.g. cold start) — re-resolve the route and start fresh.
     const route = await getRoutingForNumber(to, "voice");
-    const workspaceId = route?.workspaceId ?? "ws_demo";
+    const workspaceId = route?.workspaceId ?? (isDbEnabled ? "" : "ws_demo");
     const agentId = url.searchParams.get("agentId") ?? route?.agentId ?? "";
+    if (!workspaceId || !agentId) {
+      return sayAndHangup("Sorry, this number isn't set up yet. Please try again later.");
+    }
     session = await startSession(callSid, agentId, from, workspaceId);
   }
 

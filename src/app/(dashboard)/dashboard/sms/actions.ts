@@ -2,17 +2,18 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/auth/session-cookies";
-import { addAuditEvent, insertSmsMessage } from "@/lib/repository";
+import { addAuditEvent, getWorkspaceSendingNumber, insertSmsMessage } from "@/lib/repository";
 
 export async function sendSms(formData: FormData) {
   const session = await requireSession();
   const to = String(formData.get("to") ?? "").trim().replace(/[^\d+]/g, "");
   const body = String(formData.get("body") ?? "").trim();
-  const from = String(process.env.TWILIO_PHONE_NUMBER ?? "").replace(/[^\d+]/g, "");
+  const from = String(await getWorkspaceSendingNumber(session.workspaceId)).replace(/[^\d+]/g, "");
   if (!/^\+\d{8,15}$/.test(to) || !body || body.length > 1500) throw new Error("Enter a valid international number and message.");
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
-  if (!sid || !token || !from) throw new Error("Twilio SMS is not configured.");
+  if (!sid || !token) throw new Error("Twilio SMS is not configured.");
+  if (!/^\+\d{8,15}$/.test(from)) throw new Error("Assign this workspace a Twilio SMS-capable number before sending messages.");
   let status = "failed", twilioSid: string | undefined, errorMessage: string | undefined;
   try {
     const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {

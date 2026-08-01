@@ -24,8 +24,8 @@ export function publicWebhookUrl(req: Request): string {
  * Validates Twilio's X-Twilio-Signature header (HMAC-SHA1 over the webhook
  * URL + sorted POST params) per
  * https://www.twilio.com/docs/usage/security#validating-requests.
- * Skipped (returns true) when TWILIO_AUTH_TOKEN is unset, matching the rest of
- * the app's zero-config demo convention — set it before going to production.
+ * Local development can run without Twilio credentials. Production fails
+ * closed so an environment-variable mistake cannot expose billable webhooks.
  */
 export function isValidTwilioRequest(opts: {
   signatureHeader: string | null;
@@ -33,7 +33,7 @@ export function isValidTwilioRequest(opts: {
   params: Record<string, string>;
 }): boolean {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
-  if (!authToken) return true;
+  if (!authToken) return process.env.NODE_ENV !== "production";
   if (!opts.signatureHeader) return false;
 
   let data = opts.url;
