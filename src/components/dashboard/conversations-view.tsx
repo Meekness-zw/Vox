@@ -130,8 +130,7 @@ export function ConversationsView({ conversations }: { conversations: Conversati
             <h3 className="text-sm font-semibold">Transcript</h3>
             {selected.transcript.length === 0 ? (
               <p className="mt-3 text-sm text-muted-foreground">
-                No transcript — call did not connect. A missed-call recovery SMS
-                was sent automatically.
+                No transcript was recorded for this conversation.
               </p>
             ) : (
               <div className="mt-4 space-y-3">

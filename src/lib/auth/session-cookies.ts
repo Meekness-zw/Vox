@@ -15,7 +15,9 @@ export async function getSession(): Promise<SessionPayload | null> {
 
   const user = await findActiveUserBySession(session.userId, session.workspaceId);
   if (!user || user.email.toLowerCase() !== session.email.toLowerCase()) return null;
-  return session;
+  // Authorization stays bound to the signed identifiers, while display data
+  // is refreshed from the canonical user row on every request.
+  return { ...session, name: user.name, email: user.email };
 }
 
 /** Session or throw — use in pages/actions that require auth. */
