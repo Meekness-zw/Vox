@@ -174,6 +174,22 @@ Running only `npm run dev` does not start the bot engine. For model-generated
 answers rather than the fast offline responder, set `AI_GATEWAY_API_KEY` (or
 `OPENAI_API_KEY`) in `.env` before starting both services.
 
+## Private Business Copilot
+
+Owners, Admins, and Bookkeepers can open `/dashboard/business` to record
+balanced cashbook income/expenses, review cash/revenue/expense/profit totals,
+create evidence-based SWOT reports, and run cited sales-growth research. The
+financial tools are deliberately private and are never exposed to public voice,
+chat, SMS, or WhatsApp callers. Research sends the approved company profile and
+aggregate totals only—never customer-level ledger records.
+
+Apply the tenant-scoped accounting and research schema with `npm run db:migrate`.
+Vercel uses `VOX_RESEARCH_DAILY_LIMIT` (default 20 per workspace per UTC day)
+for cost control. Railway needs `OPENAI_API_KEY`; AI Gateway alone can answer
+normal bot conversations but cannot run the hosted web-search tool. The
+cashbook is a real balanced ledger, but it is not yet bank reconciliation,
+tax filing, payroll, or a replacement for a professional accountant.
+
 ## Deploying to Vercel
 
 ```bash
@@ -213,4 +229,4 @@ and WhatsApp sender onboarding are wired end-to-end.
 
 > Intentionally **not** built (per the requirements): website builder, lead
 > finder, proposal generator, agency/reseller/affiliate programs, white-label
-> dashboards, revenue tracking, and other "make money" / marketplace features.
+> dashboards, and other marketplace features.

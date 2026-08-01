@@ -251,6 +251,87 @@ create index if not exists business_documents_ws_created_idx
 create index if not exists business_documents_conversation_idx
   on business_documents (conversation_id);
 
+-- Double-entry bookkeeping. Monetary values are stored in integer minor units.
+create table if not exists accounting_settings (
+  workspace_id text primary key,
+  base_currency text not null default 'USD',
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists accounting_accounts (
+  id text primary key,
+  workspace_id text not null,
+  code text not null,
+  name text not null,
+  type text not null,
+  system_key text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (workspace_id, code),
+  unique (workspace_id, system_key)
+);
+create unique index if not exists accounting_accounts_id_ws_unique
+  on accounting_accounts (id, workspace_id);
+
+create table if not exists journal_entries (
+  id text primary key,
+  workspace_id text not null,
+  entry_date date not null,
+  description text not null,
+  reference text,
+  direction text not null default 'journal',
+  currency text not null default 'USD',
+  status text not null default 'posted',
+  source_type text not null default 'manual',
+  source_id text,
+  created_by text not null,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists journal_entries_id_ws_unique
+  on journal_entries (id, workspace_id);
+create unique index if not exists journal_entries_source_unique
+  on journal_entries (workspace_id, source_type, source_id) where source_id is not null;
+create index if not exists journal_entries_ws_date_idx
+  on journal_entries (workspace_id, entry_date desc, created_at desc);
+
+create table if not exists journal_lines (
+  id text primary key,
+  workspace_id text not null,
+  entry_id text not null,
+  account_id text not null,
+  memo text,
+  debit_cents bigint not null default 0,
+  credit_cents bigint not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists journal_lines_ws_entry_idx
+  on journal_lines (workspace_id, entry_id);
+create index if not exists journal_lines_ws_account_idx
+  on journal_lines (workspace_id, account_id);
+
+create table if not exists business_analyses (
+  id text primary key,
+  workspace_id text not null,
+  kind text not null,
+  title text not null,
+  query text not null,
+  report text not null,
+  sources jsonb not null default '[]'::jsonb,
+  model text,
+  created_by text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists business_analyses_ws_created_idx
+  on business_analyses (workspace_id, created_at desc);
+
+-- Atomic per-workspace usage guard for paid web research calls.
+create table if not exists business_research_usage (
+  workspace_id text primary key,
+  usage_date date not null default current_date,
+  request_count integer not null default 0,
+  last_started_at timestamptz not null default now()
+);
+
 create table if not exists bot_requests (
   id text primary key,
   workspace_id text not null,
@@ -383,8 +464,9 @@ do $$ begin
   alter table users add constraint users_status_check check (status in ('active','suspended'));
 exception when duplicate_object then null; end $$;
 do $$ begin
-  alter table users add constraint users_role_check check (role in ('Owner','Admin','Agent'));
-exception when duplicate_object then null; end $$;
+  alter table users drop constraint if exists users_role_check;
+  alter table users add constraint users_role_check check (role in ('Owner','Admin','Agent','Bookkeeper'));
+end $$;
 do $$ begin
   alter table agents add constraint agents_type_check check (type in ('voice','chat'));
 exception when duplicate_object then null; end $$;
@@ -402,6 +484,30 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 do $$ begin
   alter table workspaces add constraint workspaces_subscription_status_check check (subscription_status in ('free','active','past_due','cancelled'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table accounting_accounts add constraint accounting_accounts_type_check check (type in ('asset','liability','equity','revenue','expense'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table accounting_settings add constraint accounting_settings_currency_check check (base_currency ~ '^[A-Z]{3}$');
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table journal_entries add constraint journal_entries_status_check check (status in ('posted','reversed'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table journal_entries add constraint journal_entries_direction_check check (direction in ('income','expense','journal'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table journal_lines add constraint journal_lines_amount_check check (
+    debit_cents >= 0 and credit_cents >= 0 and
+    ((debit_cents > 0 and credit_cents = 0) or (credit_cents > 0 and debit_cents = 0))
+  );
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table business_analyses add constraint business_analyses_kind_check check (kind in ('swot','sales_research'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table business_research_usage add constraint business_research_usage_count_check check (request_count >= 0);
 exception when duplicate_object then null; end $$;
 
 do $$ begin
@@ -429,7 +535,9 @@ do $$ declare table_name text; begin
   foreach table_name in array array[
     'sms_messages','knowledge_sources','knowledge_chunks','calendar_connections',
     'voice_call_sessions','client_invoices','document_templates','business_documents',
-    'team_invitations','widget_configs','crm_connections','crm_deliveries','audit_events'
+    'team_invitations','widget_configs','crm_connections','crm_deliveries','audit_events',
+    'accounting_settings','accounting_accounts','journal_entries','journal_lines','business_analyses',
+    'business_research_usage'
   ] loop
     begin
       execute format(
@@ -441,8 +549,61 @@ do $$ declare table_name text; begin
   end loop;
 end $$;
 do $$ begin
-  alter table agents add constraint agents_id_workspace_unique unique (id,workspace_id);
+  alter table journal_lines add constraint journal_lines_entry_workspace_fk
+    foreign key (entry_id,workspace_id) references journal_entries(id,workspace_id) on delete cascade;
 exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table journal_lines add constraint journal_lines_account_workspace_fk
+    foreign key (account_id,workspace_id) references accounting_accounts(id,workspace_id);
+exception when duplicate_object then null; end $$;
+
+-- A posted journal is valid only when total debits equal total credits. The
+-- deferred triggers allow the entry and all of its lines to be inserted in one
+-- transaction, then enforce the invariant at commit.
+create or replace function vox_check_balanced_journal() returns trigger as $$
+declare
+  target_entry text;
+  previous_entry text;
+  debit_total bigint;
+  credit_total bigint;
+  line_count integer;
+begin
+  if tg_table_name = 'journal_entries' then
+    if tg_op = 'DELETE' then target_entry := old.id;
+    else target_entry := new.id;
+    end if;
+  elsif tg_op = 'DELETE' then
+    target_entry := old.entry_id;
+  elsif tg_op = 'INSERT' then
+    target_entry := new.entry_id;
+  else
+    target_entry := new.entry_id;
+    if old.entry_id is distinct from new.entry_id then previous_entry := old.entry_id; end if;
+  end if;
+
+  foreach target_entry in array array_remove(array[target_entry, previous_entry], null) loop
+    if exists (select 1 from journal_entries where id=target_entry and status='posted') then
+      select coalesce(sum(debit_cents),0), coalesce(sum(credit_cents),0), count(*)
+        into debit_total, credit_total, line_count from journal_lines where entry_id=target_entry;
+      if line_count < 2 or debit_total <= 0 or debit_total <> credit_total then
+        raise exception 'Journal entry % is not balanced', target_entry;
+      end if;
+    end if;
+  end loop;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end; $$ language plpgsql;
+drop trigger if exists journal_entries_balance_trigger on journal_entries;
+create constraint trigger journal_entries_balance_trigger
+  after insert or update on journal_entries deferrable initially deferred
+  for each row execute function vox_check_balanced_journal();
+drop trigger if exists journal_lines_balance_trigger on journal_lines;
+create constraint trigger journal_lines_balance_trigger
+  after insert or update or delete on journal_lines deferrable initially deferred
+  for each row execute function vox_check_balanced_journal();
+do $$ begin
+  alter table agents add constraint agents_id_workspace_unique unique (id,workspace_id);
+exception when duplicate_object or duplicate_table then null; end $$;
 do $$ declare table_name text; begin
   foreach table_name in array array['conversations','phone_numbers','appointments','client_invoices','business_documents','bot_requests'] loop
     begin
@@ -456,7 +617,7 @@ do $$ declare table_name text; begin
 end $$;
 do $$ begin
   alter table knowledge_sources add constraint knowledge_sources_id_workspace_unique unique (id,workspace_id);
-exception when duplicate_object then null; end $$;
+exception when duplicate_object or duplicate_table then null; end $$;
 do $$ begin
   alter table knowledge_chunks add constraint knowledge_chunks_source_workspace_fk
     foreign key (source_id,workspace_id) references knowledge_sources(id,workspace_id) on delete cascade;
@@ -489,6 +650,12 @@ alter table crm_connections enable row level security;
 alter table crm_deliveries enable row level security;
 alter table audit_events enable row level security;
 alter table webhook_events enable row level security;
+alter table accounting_settings enable row level security;
+alter table accounting_accounts enable row level security;
+alter table journal_entries enable row level security;
+alter table journal_lines enable row level security;
+alter table business_analyses enable row level security;
+alter table business_research_usage enable row level security;
 `;
 
 export async function initSchema() {

@@ -5,7 +5,7 @@ import { hasEmailCredentials } from "@/lib/invoices";
 import { getCalendarConnection, getWorkspaceSendingNumber } from "@/lib/repository";
 
 export type ServiceStatus = {
-  key: "model" | "database" | "voice" | "whatsapp" | "calendar" | "email";
+  key: "model" | "research" | "database" | "voice" | "whatsapp" | "calendar" | "email";
   label: string;
   connected: boolean;
   detail: string;
@@ -15,6 +15,8 @@ type BotHealth = {
   model_connected?: boolean;
   model_provider?: string;
   model?: string;
+  research_connected?: boolean;
+  research_model?: string;
 };
 
 async function getBotHealth(): Promise<BotHealth | null> {
@@ -60,6 +62,16 @@ export async function getSystemStatus(workspaceId = "ws_demo"): Promise<ServiceS
       label: "AI model",
       connected: modelConnected,
       detail: modelDetail,
+    },
+    {
+      key: "research",
+      label: "Business research",
+      connected: botHealth?.research_connected === true,
+      detail: botHealth?.research_connected
+        ? `Live web research · ${botHealth.research_model ?? "configured OpenAI model"}`
+        : botHealth
+          ? "Add OPENAI_API_KEY on Railway (AI Gateway alone does not provide this tool)"
+          : "Bot service unavailable (check VOX_BOT_SERVICE_URL)",
     },
     {
       key: "database",

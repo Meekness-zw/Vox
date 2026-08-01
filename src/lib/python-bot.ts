@@ -113,3 +113,65 @@ export async function requestPythonBuild(input: BuildBotInput): Promise<BuiltBot
     knowledge: result.knowledge,
   };
 }
+
+export type PythonBusinessAnalysis = {
+  title: string;
+  report: string;
+  sources: { title: string; url: string }[];
+  model: string;
+};
+
+export async function requestBusinessAnalysis(input: {
+  kind: "swot" | "sales_research";
+  businessContext: string;
+  query: string;
+  financialSummary: string;
+}): Promise<PythonBusinessAnalysis> {
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl()}/v1/business-analysis`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        kind: input.kind,
+        business_context: input.businessContext,
+        query: input.query,
+        financial_summary: input.financialSummary,
+      }),
+      signal: AbortSignal.timeout(90_000),
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw new Error("The Python business research service is unavailable.", { cause: error });
+  }
+  if (!response.ok) {
+    await response.text();
+    throw new Error(
+      response.status === 503
+        ? "Business research is not configured on the Python service. Add OPENAI_API_KEY on Railway."
+        : `Business research could not be completed (service status ${response.status}). Try again or check the Railway logs.`
+    );
+  }
+  const result = await response.json() as PythonBusinessAnalysis;
+  if (!result.report?.trim()) throw new Error("Business research returned an empty report.");
+  const sources = Array.isArray(result.sources)
+    ? result.sources.flatMap((source) => {
+        try {
+          const url = new URL(String(source?.url ?? ""));
+          if (url.protocol !== "https:" && url.protocol !== "http:") return [];
+          return [{
+            title: String(source?.title ?? "Source").trim().slice(0, 300) || "Source",
+            url: url.toString(),
+          }];
+        } catch {
+          return [];
+        }
+      }).slice(0, 30)
+    : [];
+  return {
+    title: String(result.title || "Business analysis").trim().slice(0, 300),
+    report: result.report.trim(),
+    sources,
+    model: String(result.model || "unknown").slice(0, 100),
+  };
+}

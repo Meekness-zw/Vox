@@ -243,3 +243,45 @@ export type CompanyProfile = {
   businessSchedule?: { day: string; enabled: boolean; opens: string; closes: string }[];
   updatedAt: string;
 };
+
+export type AccountingAccountType =
+  | "asset"
+  | "liability"
+  | "equity"
+  | "revenue"
+  | "expense";
+
+export type BookkeepingEntry = {
+  id: string;
+  entryDate: string;
+  description: string;
+  reference?: string;
+  direction: "income" | "expense" | "journal";
+  amountCents: number;
+  currency: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+export type BookkeepingSummary = {
+  currency: string;
+  cashCents: number;
+  revenueCents: number;
+  expenseCents: number;
+  profitCents: number;
+  entryCount: number;
+};
+
+export type ResearchSource = { title: string; url: string };
+
+export type BusinessAnalysis = {
+  id: string;
+  kind: "swot" | "sales_research";
+  title: string;
+  query: string;
+  report: string;
+  sources: ResearchSource[];
+  model?: string;
+  createdBy: string;
+  createdAt: string;
+};

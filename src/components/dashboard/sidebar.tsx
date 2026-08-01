@@ -20,6 +20,7 @@ import {
   Boxes,
   UsersRound,
   Activity,
+  BriefcaseBusiness,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { logout } from "@/lib/auth/actions";
@@ -33,6 +34,7 @@ const nav = [
   { href: "/dashboard/invoices", label: "Invoices", icon: Receipt },
   { href: "/dashboard/documents", label: "Documents", icon: Files },
   { href: "/dashboard/knowledge", label: "Knowledge Base", icon: BookOpen },
+  { href: "/dashboard/business", label: "Business Copilot", icon: BriefcaseBusiness },
   { href: "/dashboard/sms", label: "SMS Messaging", icon: Send },
 ];
 
@@ -47,14 +49,25 @@ function SidebarItem({ href, label, icon: Icon, active }: {
   icon: typeof LayoutDashboard;
   active: boolean;
 }) {
-  return <Link href={href} className={cn("flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors", active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Icon className="size-4" />{label}</Link>;
+  return <Link href={href} aria-current={active ? "page" : undefined} className={cn("flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors", active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Icon className="size-4" />{label}</Link>;
+}
+
+function MobileSidebarItem({ href, label, icon: Icon, active }: {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  active: boolean;
+}) {
+  return <Link href={href} aria-current={active ? "page" : undefined} className={cn("flex min-w-20 flex-col items-center justify-center gap-1 px-2 py-2 text-[10px] font-medium", active ? "text-primary" : "text-muted-foreground")}><Icon className="size-4" /><span className="max-w-20 truncate">{label}</span></Link>;
 }
 
 export function Sidebar({
   user,
+  role,
   admin = false,
 }: {
   user: { name: string; email: string };
+  role?: string;
   admin?: boolean;
 }) {
   const pathname = usePathname();
@@ -67,15 +80,22 @@ export function Sidebar({
 
   const isActive = (href: string, exact?: boolean) =>
     exact ? pathname === href : pathname === href || pathname.startsWith(href + "/");
+  const visibleNav = nav.filter((item) => item.href !== "/dashboard/business" || ["Owner", "Admin", "Bookkeeper"].includes(role ?? ""));
+  const adminNav = admin ? [
+    { href: "/dashboard/admin/operations", label: "Operations", icon: Activity },
+    { href: "/dashboard/admin/clients", label: "Users", icon: UsersRound },
+    { href: "/dashboard/admin/bots", label: "Bots", icon: Boxes },
+    { href: "/dashboard/admin/requests", label: "Build queue", icon: ShieldCheck },
+  ] : [];
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card lg:flex">
+    <><aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card lg:flex">
       <div className="flex h-16 items-center border-b border-border px-5">
         <Logo />
       </div>
       <nav className="flex-1 space-y-1 p-3">
         <SidebarItem href="/dashboard/request-bot" label="Request a bot" icon={ClipboardPlus} active={isActive("/dashboard/request-bot")} />
-        {nav.map((item) => (
+        {visibleNav.map((item) => (
           <SidebarItem key={item.href} {...item} active={isActive(item.href, item.exact)} />
         ))}
         {admin && <>
@@ -121,5 +141,11 @@ export function Sidebar({
         </div>
       </div>
     </aside>
+    <nav aria-label="Mobile dashboard navigation" className="fixed inset-x-0 bottom-0 z-50 flex h-16 overflow-x-auto border-t border-border bg-card/95 px-1 backdrop-blur lg:hidden">
+      <MobileSidebarItem href="/dashboard/request-bot" label="Request bot" icon={ClipboardPlus} active={isActive("/dashboard/request-bot")} />
+      {visibleNav.map((item) => <MobileSidebarItem key={item.href} {...item} active={isActive(item.href, item.exact)} />)}
+      {adminNav.map((item) => <MobileSidebarItem key={item.href} {...item} active={isActive(item.href)} />)}
+      {secondary.map((item) => <MobileSidebarItem key={item.href} {...item} active={isActive(item.href)} />)}
+    </nav></>
   );
 }

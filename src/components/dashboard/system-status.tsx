@@ -33,10 +33,10 @@ export async function SystemStatus({
                   s.connected ? "text-success" : "text-muted-foreground"
                 )}
               >
-                {s.connected ? "· connected" : "· demo"}
+                {s.connected ? "· connected" : "· setup needed"}
               </span>
             </div>
-            <div className="truncate text-xs text-muted-foreground">
+            <div className="break-words text-xs text-muted-foreground">
               {s.detail}
             </div>
           </div>

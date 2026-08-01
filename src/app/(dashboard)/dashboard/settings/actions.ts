@@ -27,7 +27,7 @@ export async function createInvitation(formData: FormData) {
   const session = await requireManager();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const role = String(formData.get("role") ?? "Agent");
-  if (!email || !["Admin", "Agent"].includes(role)) throw new Error("Invalid invitation");
+  if (!email || !["Admin", "Agent", "Bookkeeper"].includes(role)) throw new Error("Invalid invitation");
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
   await createTeamInvitation({
@@ -97,7 +97,7 @@ export async function manageTeamMember(formData: FormData) {
     await addAuditEvent(session.workspaceId, session.email, "team.member_deactivated", { userId });
   } else {
     const role = String(formData.get("role") ?? "Agent");
-    if (!["Admin", "Agent"].includes(role)) throw new Error("Invalid role");
+    if (!["Admin", "Agent", "Bookkeeper"].includes(role)) throw new Error("Invalid role");
     await updateWorkspaceUser({ workspaceId: session.workspaceId, userId, role });
     await addAuditEvent(session.workspaceId, session.email, "team.role_updated", { userId, role });
   }

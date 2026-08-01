@@ -52,7 +52,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             </div>
             <form action={createInvitation} className="flex flex-wrap gap-2">
               <Input name="email" type="email" placeholder="teammate@company.com" className="h-8 w-52" required />
-              <select name="role" className="h-8 rounded-md border bg-background px-2 text-sm"><option>Agent</option><option>Admin</option></select>
+              <select name="role" className="h-8 rounded-md border bg-background px-2 text-sm"><option>Agent</option><option>Bookkeeper</option><option>Admin</option></select>
               <Button size="sm">Create invite link</Button>
             </form>
           </CardHeader>
@@ -68,7 +68,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 </div>
                 {m.role === "Owner" ? <Badge variant="default">Owner</Badge> : <form action={manageTeamMember} className="flex items-center gap-2">
                   <input type="hidden" name="userId" value={m.id} />
-                  <select name="role" defaultValue={m.role} className="h-8 rounded-md border bg-background px-2 text-xs"><option>Agent</option><option>Admin</option></select>
+                  <select name="role" defaultValue={m.role} className="h-8 rounded-md border bg-background px-2 text-xs"><option>Agent</option><option>Bookkeeper</option><option>Admin</option></select>
                   <Button size="sm" variant="outline" name="intent" value="role">Save</Button>
                   <Button size="sm" variant="outline" name="intent" value="deactivate">Deactivate</Button>
                 </form>}

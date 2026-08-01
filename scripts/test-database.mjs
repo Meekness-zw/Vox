@@ -13,7 +13,8 @@ try {
     "client_invoices", "document_templates", "business_documents",
     "bot_requests", "company_profiles", "team_invitations", "widget_configs",
     "widget_rate_limits", "crm_connections", "crm_deliveries", "audit_events",
-    "webhook_events",
+    "webhook_events", "accounting_settings", "accounting_accounts", "journal_entries", "journal_lines",
+    "business_analyses", "business_research_usage",
   ];
   const tables = await sql`
     select table_name from information_schema.tables
@@ -41,7 +42,14 @@ try {
       (select count(*)::int from client_invoices x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_invoices,
       (select count(*)::int from business_documents x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_documents,
       (select count(*)::int from bot_requests x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_bot_requests,
-      (select count(*)::int from company_profiles x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_profiles
+      (select count(*)::int from company_profiles x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_profiles,
+      (select count(*)::int from accounting_accounts x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_accounting_accounts,
+      (select count(*)::int from journal_entries x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_journal_entries,
+      (select count(*)::int from journal_lines x left join journal_entries e on e.id=x.entry_id and e.workspace_id=x.workspace_id where e.id is null) orphan_journal_lines,
+      (select count(*)::int from business_analyses x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_business_analyses,
+      (select count(*)::int from accounting_settings x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_accounting_settings,
+      (select count(*)::int from business_research_usage x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_business_research_usage,
+      (select count(*)::int from users where role not in ('Owner','Admin','Agent','Bookkeeper')) invalid_user_role
   `);
   for (const [name, count] of Object.entries(integrity)) {
     assert.equal(Number(count), 0, `${name} must be zero`);
@@ -65,12 +73,18 @@ try {
       "sms_messages", "knowledge_sources", "knowledge_chunks", "calendar_connections",
       "voice_call_sessions", "client_invoices", "document_templates", "business_documents",
       "team_invitations", "widget_configs", "crm_connections", "crm_deliveries", "audit_events",
+      "accounting_settings", "accounting_accounts", "journal_entries", "journal_lines", "business_analyses",
+      "business_research_usage",
     ].map((table) => `${table}_workspace_fk`),
     "agents_id_workspace_unique", "conversations_agent_workspace_fk",
     "phone_numbers_agent_workspace_fk", "appointments_agent_workspace_fk",
     "client_invoices_agent_workspace_fk", "business_documents_agent_workspace_fk",
     "bot_requests_agent_workspace_fk", "knowledge_sources_id_workspace_unique",
-    "knowledge_chunks_source_workspace_fk",
+    "knowledge_chunks_source_workspace_fk", "accounting_settings_currency_check", "accounting_accounts_type_check",
+    "journal_entries_status_check", "journal_entries_direction_check",
+    "journal_lines_amount_check", "business_analyses_kind_check",
+    "business_research_usage_count_check",
+    "journal_lines_entry_workspace_fk", "journal_lines_account_workspace_fk",
   ];
   const constraints = await sql`
     select conname from pg_constraint where conname = any(${requiredConstraints})
@@ -80,6 +94,26 @@ try {
     new Set(requiredConstraints),
     "Database integrity constraints are incomplete."
   );
+  const [journalIntegrity] = await sql.unsafe(`
+    select count(*)::int unbalanced_journals from (
+      select e.id
+      from journal_entries e
+      left join journal_lines l on l.entry_id=e.id and l.workspace_id=e.workspace_id
+      where e.status='posted'
+      group by e.id
+      having count(l.id) < 2
+        or coalesce(sum(l.debit_cents),0) <= 0
+        or coalesce(sum(l.debit_cents),0) <> coalesce(sum(l.credit_cents),0)
+    ) invalid
+  `);
+  assert.equal(Number(journalIntegrity.unbalanced_journals), 0, "Every posted journal must balance.");
+  const balanceTriggers = await sql`
+    select tgname from pg_trigger
+    where not tgisinternal and tgname = any(${[
+      "journal_entries_balance_trigger", "journal_lines_balance_trigger",
+    ]})
+  `;
+  assert.equal(balanceTriggers.length, 2, "Journal balance triggers must be installed.");
   console.log(`database audit passed (${requiredTables.length} tables, tenant integrity clean, RLS and constraints enabled)`);
 } finally {
   await sql.end();

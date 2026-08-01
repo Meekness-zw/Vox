@@ -4,6 +4,7 @@ process.env.SESSION_SECRET = "test-secret-that-is-long-and-not-used-in-productio
 const { signSession, verifySession } = await import("../src/lib/auth/session.ts");
 const { isValidBusinessSchedule, isValidTimezone } = await import("../src/lib/business-schedule.ts");
 const { signWidgetEmbed, verifyWidgetEmbed, widgetDomainAllowed } = await import("../src/lib/widget-auth.ts");
+const { currencyFractionDigits, majorToMinor } = await import("../src/lib/currency.ts");
 
 const token = await signSession({
   userId: "u_test", workspaceId: "ws_test", email: "owner@example.com", name: "Owner",
@@ -26,5 +27,13 @@ assert.equal(widgetDomainAllowed("example.com.attacker.test", ["example.com"]), 
 const proof = signWidgetEmbed("wgt_test", "shop.example.com");
 assert.equal(verifyWidgetEmbed(proof, "wgt_test", ["example.com"]), true);
 assert.equal(verifyWidgetEmbed(proof, "wgt_other", ["example.com"]), false);
+
+assert.equal(currencyFractionDigits("USD"), 2);
+assert.equal(currencyFractionDigits("JPY"), 0);
+assert.equal(currencyFractionDigits("KWD"), 3);
+assert.equal(majorToMinor(12.34, "USD"), 1234);
+assert.equal(majorToMinor(12, "JPY"), 12);
+assert.equal(majorToMinor(12.345, "KWD"), 12345);
+assert.throws(() => majorToMinor(12.345, "USD"), /too many decimal places/);
 
 console.log("core TypeScript assertions passed");

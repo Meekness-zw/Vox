@@ -13,8 +13,8 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar user={{ name: session.name, email: session.email }} admin={isVoxAdmin(session.email)} />
-      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+      <Sidebar user={{ name: session.name, email: session.email }} role={session.role} admin={isVoxAdmin(session.email)} />
+      <div className="flex min-w-0 flex-1 flex-col pb-16 lg:pb-0">{children}</div>
     </div>
   );
 }

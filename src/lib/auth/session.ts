@@ -6,6 +6,7 @@ export type SessionPayload = {
   workspaceId: string;
   email: string;
   name: string;
+  role?: string;
   exp: number;
 };
 
