@@ -102,13 +102,25 @@ export async function generateReply(
       : "No approved company knowledge has been added yet.");
   let activeMessages = messages;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await requestPythonReply({
-      workspaceId,
-      agent,
-      messages: activeMessages,
-      knowledge,
-      channel: toolContext?.channel ?? (agent.type === "voice" ? "voice" : "chat"),
-    });
+    let result;
+    try {
+      result = await requestPythonReply({
+        workspaceId,
+        agent,
+        messages: activeMessages,
+        knowledge,
+        channel: toolContext?.channel ?? (agent.type === "voice" ? "voice" : "chat"),
+      });
+    } catch (error) {
+      // Keep public channels usable during a transient bot-service outage. Do
+      // not substitute the dental demo's facts for a real tenant's knowledge.
+      console.error("Python bot reply failed", error);
+      if (workspaceId === "ws_demo") {
+        const latestUser = [...activeMessages].reverse().find((message) => message.role === "user");
+        return knowledgeReply(latestUser?.content ?? "", agent.name);
+      }
+      return "I'm sorry, I'm having trouble accessing the company assistant right now. I can take your name and contact details so a team member can follow up.";
+    }
     if (!result.action) return result.reply;
     const actionResult = toolContext
       ? await executePythonAction(result.action, toolContext)

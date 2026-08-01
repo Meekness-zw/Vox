@@ -16,3 +16,8 @@ Set the same `VOX_BOT_SERVICE_TOKEN` in both services. Use either
 directly. Direct OpenAI calls default to the low-latency `gpt-4.1-mini` model
 and can be changed with `VOX_OPENAI_MODEL`. Without either credential the
 service remains testable with its Python offline responder.
+
+For Railway, also set `VOX_APP_URL` to the public Vercel origin and configure
+`ELEVENLABS_API_KEY`. `OPENAI_API_KEY` provides both the model/STT fallback and
+an emergency TTS fallback if ElevenLabs is temporarily unavailable. The image
+runs as an unprivileged user and exposes a Docker health check at `/health`.

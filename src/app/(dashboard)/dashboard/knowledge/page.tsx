@@ -19,6 +19,8 @@ import { removeKnowledgeSource } from "./actions";
 export const dynamic = "force-dynamic";
 
 const typeIcon = {
+  // Retained for existing rows created before direct PDF ingestion was removed
+  // from the product UI.
   PDF: FileText,
   Document: FileText,
   FAQ: HelpCircle,

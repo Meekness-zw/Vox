@@ -12,15 +12,6 @@ import { connectCrm, createInvitation, manageTeamMember, revokeInvitation, saveW
 
 export const dynamic = "force-dynamic";
 
-const staticIntegrations = [
-  { name: "Microsoft Outlook", category: "Calendar", connected: false },
-  { name: "HubSpot", category: "CRM", connected: false },
-  { name: "Salesforce", category: "CRM", connected: false },
-  { name: "Zoho", category: "CRM", connected: false },
-  { name: "Pipedrive", category: "CRM", connected: false },
-  { name: "Telnyx", category: "Telephony", connected: false },
-];
-
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ invite?: string }> }) {
   const session = await getSession();
   const workspaceId = session?.workspaceId ?? "ws_demo";
@@ -120,7 +111,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           <CardHeader>
             <CardTitle>Integrations</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Connect CRMs, calendars and telephony providers
+              Live connections for this workspace
             </p>
           </CardHeader>
           <CardContent>
@@ -133,7 +124,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 </div>
                 {calendarConnected ? (
                   <Badge variant="success">
-                    <Check className="size-3" /> {voiceNumber}
+                    <Check className="size-3" /> Connected
                   </Badge>
                 ) : (
                   <a
@@ -153,10 +144,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 </div>
                 {voiceConfigured ? (
                   <Badge variant="success">
-                    <Check className="size-3" /> {whatsappNumber}
+                    <Check className="size-3" /> {voiceNumber}
                   </Badge>
                 ) : (
-                  <span className="text-xs text-muted-foreground">Set TWILIO_ACCOUNT_SID</span>
+                  <span className="text-xs text-muted-foreground">Assign a Twilio voice number</span>
                 )}
               </div>
               <div className="flex items-center justify-between rounded-lg border border-border p-4">
@@ -166,30 +157,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 </div>
                 {whatsappConfigured ? (
                   <Badge variant="success">
-                    <Check className="size-3" /> Connected
+                    <Check className="size-3" /> {whatsappNumber}
                   </Badge>
                 ) : (
-                  <span className="text-xs text-muted-foreground">Set TWILIO_WHATSAPP_NUMBER</span>
+                  <span className="text-xs text-muted-foreground">Assign an approved sender</span>
                 )}
               </div>
 
-              {staticIntegrations.map((i) => (
-                <div
-                  key={i.name}
-                  className="flex items-center justify-between rounded-lg border border-border p-4"
-                >
-                  <div>
-                    <div className="text-sm font-medium">{i.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {i.category}
-                    </div>
-                  </div>
-                  <Badge variant={i.connected ? "success" : "muted"}>
-                    {i.connected && <Check className="size-3" />}
-                    {i.connected ? "Connected" : "Not connected"}
-                  </Badge>
-                </div>
-              ))}
             </div>
           </CardContent>
         </Card>

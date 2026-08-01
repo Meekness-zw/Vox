@@ -15,7 +15,7 @@ export default async function SmsPage() {
   const messages = await listSmsMessages(session.workspaceId);
   const sent = messages.filter((m) => m.status !== "failed").length;
   const failed = messages.filter((m) => m.status === "failed").length;
-  return <><Topbar title="SMS Automation" /><div className="space-y-6 p-4 sm:p-6">
+  return <><Topbar title="SMS Messaging" /><div className="space-y-6 p-4 sm:p-6">
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <StatCard label="Messages recorded" value={String(messages.length)} />
       <StatCard label="Accepted by Twilio" value={String(sent)} />

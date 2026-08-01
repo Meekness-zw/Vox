@@ -11,7 +11,7 @@ import {
 export const metadata: Metadata = {
   title: "Features",
   description:
-    "Everything in Vox: AI voice agents, chat agents, knowledge base training, SMS automation, integrations, and analytics.",
+    "Everything in Vox: AI voice agents, chat agents, knowledge base training, SMS messaging, integrations, and analytics.",
 };
 
 const sections = [
@@ -43,11 +43,10 @@ const sections = [
       {
         name: "Call Intelligence",
         items: [
-          "Call recording",
           "Call summaries",
           "Action items",
           "Transcripts",
-          "Missed-call recovery",
+          "Human transfer status",
         ],
       },
     ],
@@ -72,8 +71,6 @@ const sections = [
           "Website chat",
           "WhatsApp",
           "SMS",
-          "Facebook Messenger",
-          "Instagram DM",
         ],
       },
     ],
@@ -84,26 +81,25 @@ const sections = [
     groups: [
       {
         name: "Train agents using",
-        items: ["PDFs", "Documents", "FAQs", "Website URLs", "CSV files", "Manual Q&A entries"],
+        items: ["Pasted documents", "FAQs", "Website URLs", "CSV content", "Manual Q&A entries"],
       },
       {
         name: "Features",
-        items: ["Auto-sync knowledge", "Version control", "Source citations", "Confidence scoring"],
+        items: ["Immediate indexing", "Workspace-private retrieval", "Multilingual fallback search", "Source management"],
       },
     ],
   },
   {
     icon: Send,
-    title: "SMS Automation",
+    title: "SMS Messaging",
     groups: [
       {
-        name: "Automated SMS",
+        name: "Dashboard SMS",
         items: [
-          "Appointment confirmations",
-          "Appointment reminders",
-          "Follow-ups",
-          "Lead nurturing",
-          "Customer re-engagement",
+          "Tenant-assigned sender number",
+          "Customer messages",
+          "Delivery status storage",
+          "Message history",
         ],
       },
     ],
@@ -112,9 +108,9 @@ const sections = [
     icon: Plug,
     title: "Integrations",
     groups: [
-      { name: "CRM", items: ["HubSpot", "Salesforce", "Zoho", "Pipedrive"] },
-      { name: "Calendars", items: ["Google Calendar", "Microsoft Outlook"] },
-      { name: "Communication", items: ["Twilio", "Telnyx", "WhatsApp Business"] },
+      { name: "CRM", items: ["Signed outbound CRM webhooks", "Lead delivery log", "Retry tracking"] },
+      { name: "Calendars", items: ["Google Calendar", "Per-business availability", "Double-booking protection"] },
+      { name: "Communication", items: ["Twilio Voice", "Twilio SMS", "WhatsApp Business"] },
     ],
   },
   {
@@ -156,7 +152,7 @@ export default function FeaturesPage() {
         </h1>
         <p className="mt-4 text-lg text-muted-foreground">
           A complete AI voice and chat platform — from the first ring to the
-          follow-up text.
+          saved appointment and conversation record.
         </p>
       </div>
 

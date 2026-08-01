@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     template: "%s · Vox",
   },
   description:
-    "AI voice and chat agents that answer calls, reply to messages, book appointments, and follow up over SMS — 24/7.",
+    "AI voice and chat agents that answer calls, reply to messages, book appointments, and support Twilio SMS — 24/7.",
 };
 
 export default function RootLayout({

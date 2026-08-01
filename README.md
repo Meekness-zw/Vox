@@ -1,7 +1,7 @@
 # Vox — AI Voice & Chat Platform
 
 An AI-powered customer engagement platform: AI voice agents, AI chat agents,
-WhatsApp, SMS follow-up, real appointment booking (Google Calendar), invoicing,
+WhatsApp, dashboard SMS, real appointment booking (Google Calendar), invoicing,
 knowledge-base training, multi-language support, and conversation analytics.
 
 The web application runs on Vercel and the real-time Python voice engine runs
@@ -21,9 +21,9 @@ document, billing, and audit records.
 - **Agents** — list + **Agent Builder** (prompt editor, voice, personality,
   language, business hours, escalation) with a **live test panel**
 - **Conversations** — transcripts, AI summaries, action items, sentiment
-- **Knowledge Base** — sources (PDF, Document, FAQ, URL, CSV, Manual Q&A) with
-  auto-sync, version control, citations, confidence scoring
-- **SMS Automation** — confirmations, reminders, follow-ups, re-engagement
+- **Knowledge Base** — pasted documents, FAQs, website URLs, CSV text, and
+  manual Q&A, indexed with tenant-scoped multilingual retrieval
+- **SMS Messaging** — send and record messages through each workspace's assigned Twilio number
 - **Settings** — team roles/permissions, integrations (CRM, calendar,
   telephony), audit log
 - **Billing** — current plan, usage meters, plan switching via Stripe Checkout,
@@ -204,13 +204,10 @@ and WhatsApp sender onboarding are wired end-to-end.
   registration after that external onboarding is complete.
 - **Model-generated summaries** — `analyzeConversation` is heuristic; swap in a
   model pass (the seam is `src/lib/conversation.ts`) when the gateway is funded.
-- **PDF ingestion** — the knowledge base ingests URLs and text today; add a PDF
-  parser (e.g. `unpdf`) for the PDF/Document tiles.
+- **PDF ingestion** — the knowledge base ingests URLs and pasted text today;
+  binary PDF upload/parsing is not implemented.
 - **Plan limits** — live usage is reported from database records. Add hard
   quota enforcement if a plan must stop answering immediately at its limit.
-- **KPI reconciliation** — the Overview's `appointmentsBooked` KPI still comes
-  from the `analyzeConversation` heuristic, not the real `appointments` table;
-  worth swapping to a real count now that appointments are real.
 - **Optional services** — Resend and Stripe can remain unset during testing;
   PDF creation, calls, WhatsApp, CRM webhooks, and calendar booking still work.
 

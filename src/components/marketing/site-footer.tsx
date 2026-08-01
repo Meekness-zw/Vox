@@ -16,7 +16,7 @@ const columns = [
     links: [
       { href: "/features", label: "AI phone receptionist" },
       { href: "/features", label: "Website chat" },
-      { href: "/features", label: "SMS follow-up" },
+      { href: "/features", label: "SMS messaging" },
       { href: "/features", label: "Appointment booking" },
     ],
   },

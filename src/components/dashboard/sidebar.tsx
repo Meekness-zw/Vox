@@ -33,7 +33,7 @@ const nav = [
   { href: "/dashboard/invoices", label: "Invoices", icon: Receipt },
   { href: "/dashboard/documents", label: "Documents", icon: Files },
   { href: "/dashboard/knowledge", label: "Knowledge Base", icon: BookOpen },
-  { href: "/dashboard/sms", label: "SMS Automation", icon: Send },
+  { href: "/dashboard/sms", label: "SMS Messaging", icon: Send },
 ];
 
 const secondary = [

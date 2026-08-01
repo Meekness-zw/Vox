@@ -25,22 +25,22 @@ const coreFeatures = [
   {
     icon: MessageSquare,
     title: "AI Chat Agents",
-    desc: "A real-time website widget plus WhatsApp, SMS, Messenger & Instagram — all from one knowledge base.",
+    desc: "A real-time website widget plus Twilio WhatsApp and SMS — all using the same private knowledge base.",
   },
   {
     icon: Send,
-    title: "SMS Follow-Up",
-    desc: "Automated confirmations, reminders, follow-ups, and re-engagement that recover missed opportunities.",
+    title: "SMS Messaging",
+    desc: "Send direct customer messages from the dashboard using the phone number assigned to the business.",
   },
   {
     icon: CalendarCheck,
     title: "Appointment Booking",
-    desc: "Agents check availability and book straight into Google Calendar or Outlook during the conversation.",
+    desc: "Agents check each business's real schedule and book into Vox and Google Calendar during the conversation.",
   },
   {
     icon: BookOpen,
     title: "Knowledge Base Training",
-    desc: "Train on PDFs, docs, FAQs, URLs and CSVs with auto-sync, versioning, and source citations.",
+    desc: "Add company documents, FAQs, website URLs and CSV content for private, multilingual retrieval.",
   },
   {
     icon: BarChart3,
@@ -53,7 +53,7 @@ const steps = [
   {
     n: "01",
     title: "Train your agent",
-    desc: "Upload documents or point us at your website. Vox builds a knowledge base in minutes.",
+    desc: "Paste company information or add a website URL. Vox indexes it into a private knowledge base.",
   },
   {
     n: "02",
@@ -68,15 +68,12 @@ const steps = [
 ];
 
 const integrations = [
-  "HubSpot",
-  "Salesforce",
-  "Zoho",
-  "Pipedrive",
   "Google Calendar",
-  "Outlook",
   "Twilio",
-  "Telnyx",
   "WhatsApp",
+  "ElevenLabs",
+  "Supabase",
+  "CRM webhooks",
 ];
 
 export default function LandingPage() {
@@ -202,8 +199,8 @@ export default function LandingPage() {
             </p>
             <ul className="mt-6 space-y-3 text-base leading-7 text-muted-foreground">
               <li>• Natural, multi-turn conversations with interruption handling</li>
-              <li>• Call recording, summaries, action items & transcripts</li>
-              <li>• Missed-call recovery and human handoff when it matters</li>
+              <li>• Conversation summaries, action items & transcripts</li>
+              <li>• Human handoff when the assistant cannot safely help</li>
             </ul>
           </div>
           <div className="rounded-xl border border-border bg-background p-6">

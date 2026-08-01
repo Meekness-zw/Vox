@@ -29,6 +29,10 @@ export async function requestPythonReply(input: {
   knowledge?: string;
   channel?: "voice" | "chat" | "whatsapp" | "sms";
 }): Promise<PythonBotReply> {
+  const channel = input.channel ?? (input.agent.type === "voice" ? "voice" : "chat");
+  // Messaging providers expect webhook responses promptly. Voice and dashboard
+  // requests can tolerate a little longer because they have their own caller UI.
+  const timeoutMs = channel === "whatsapp" || channel === "sms" ? 12_000 : 28_000;
   let response: Response;
   try {
     response = await fetch(`${baseUrl()}/v1/reply`, {
@@ -39,9 +43,9 @@ export async function requestPythonReply(input: {
         agent: input.agent,
         messages: input.messages,
         knowledge: input.knowledge ?? "",
-        channel: input.channel ?? (input.agent.type === "voice" ? "voice" : "chat"),
+        channel,
       }),
-      signal: AbortSignal.timeout(28_000),
+      signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
     });
   } catch (error) {

@@ -14,19 +14,19 @@ const faqs = [
   },
   {
     q: "Can I use my own phone number?",
-    a: "Yes. Connect an existing number through Twilio or Telnyx, or provision a new one in a couple of clicks.",
+    a: "Yes. Port the number to Twilio or forward it to the Twilio number assigned to the bot. Vox can also provision a new Twilio number.",
   },
   {
     q: "Do all plans include SMS and appointment booking?",
-    a: "Yes — SMS follow-ups and appointment booking are included on every plan, including Starter.",
+    a: "The platform supports dashboard SMS and appointment booking. Access and limits can be configured for each workspace plan.",
   },
   {
     q: "What happens if I exceed my limits?",
-    a: "Your agents keep running. Overage is billed at your plan's per-minute and per-conversation rate, and you can upgrade anytime.",
+    a: "Usage remains visible in the dashboard. Automatic overage charging and hard quota enforcement require Stripe billing to be enabled.",
   },
   {
     q: "Is there a free trial?",
-    a: "Every paid plan starts with a free trial — no credit card required to build and test your first agent.",
+    a: "You can create a free account and test the demo before requesting a customized paid bot.",
   },
 ];
 
