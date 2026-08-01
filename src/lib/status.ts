@@ -11,13 +11,42 @@ export type ServiceStatus = {
   detail: string;
 };
 
+type BotHealth = {
+  model_connected?: boolean;
+  model_provider?: string;
+  model?: string;
+};
+
+async function getBotHealth(): Promise<BotHealth | null> {
+  const baseUrl = process.env.VOX_BOT_SERVICE_URL?.trim().replace(/\/$/, "");
+  if (!baseUrl) return null;
+  try {
+    const response = await fetch(`${baseUrl}/health`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(3_000),
+    });
+    return response.ok ? (await response.json()) as BotHealth : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getSystemStatus(workspaceId = "ws_demo"): Promise<ServiceStatus[]> {
-  const modelConnected = hasModelCredentials();
+  const gatewayConnected = hasModelCredentials();
   const twilioConnected = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
-  const [voiceNumber, whatsappNumber] = await Promise.all([
+  const [voiceNumber, whatsappNumber, botHealth] = await Promise.all([
     getWorkspaceSendingNumber(workspaceId, "voice"),
     getWorkspaceSendingNumber(workspaceId, "whatsapp"),
+    getBotHealth(),
   ]);
+  const modelConnected = gatewayConnected || botHealth?.model_connected === true;
+  const modelDetail = gatewayConnected
+    ? `Live via AI Gateway · ${DEFAULT_MODEL}`
+    : botHealth?.model_connected
+      ? `Live via ${botHealth.model_provider ?? "Python bot service"} · ${botHealth.model ?? "configured model"}`
+      : botHealth
+        ? "Python bot is online but has no model key (set OPENAI_API_KEY on Railway)"
+        : "Bot service unavailable (check VOX_BOT_SERVICE_URL)";
   const voiceConnected = twilioConnected && Boolean(voiceNumber);
   const whatsappConnected = twilioConnected && Boolean(whatsappNumber);
   const emailConnected = hasEmailCredentials();
@@ -30,9 +59,7 @@ export async function getSystemStatus(workspaceId = "ws_demo"): Promise<ServiceS
       key: "model",
       label: "AI model",
       connected: modelConnected,
-      detail: modelConnected
-        ? `Live via AI Gateway · ${DEFAULT_MODEL}`
-        : "Demo responder (set AI_GATEWAY_API_KEY)",
+      detail: modelDetail,
     },
     {
       key: "database",

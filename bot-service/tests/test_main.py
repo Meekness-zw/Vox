@@ -39,6 +39,8 @@ class BotEngineTests(unittest.TestCase):
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["version"], "1.1.0")
         self.assertEqual(health.json()["voice_pipeline"], "bilingual-v2")
+        self.assertIn("model_connected", health.json())
+        self.assertIn("model_provider", health.json())
         self.assertEqual(client.get("/health", headers={"host": "bad/host"}).status_code, 400)
         oversized = client.post(
             "/v1/reply",

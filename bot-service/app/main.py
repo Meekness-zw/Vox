@@ -368,12 +368,26 @@ def offline_reply(req: ReplyRequest) -> str:
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+async def health() -> dict[str, object]:
+    gateway_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if gateway_key:
+        model_provider = "Vercel AI Gateway"
+        model = os.getenv("VOX_MODEL", "").strip() or "anthropic/claude-haiku-4-5"
+    elif openai_key:
+        model_provider = "OpenAI"
+        model = os.getenv("VOX_OPENAI_MODEL", "").strip() or "gpt-4.1-mini"
+    else:
+        model_provider = "offline responder"
+        model = "offline"
     return {
         "status": "ok",
         "service": "vox-python-bot-engine",
         "version": app.version,
         "voice_pipeline": "bilingual-v2",
+        "model_connected": bool(gateway_key or openai_key),
+        "model_provider": model_provider,
+        "model": model,
     }
 
 
