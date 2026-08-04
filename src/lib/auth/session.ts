@@ -51,21 +51,18 @@ async function hmac(data: string) {
 }
 
 function signaturesMatch(expected: string, provided: string) {
-  try {
-    const expectedBytes = fromB64url(expected);
-    const providedBytes = fromB64url(provided);
-    if (expectedBytes.length !== providedBytes.length) return false;
+  // Compare the encoded signatures, not their decoded bytes. A base64url
+  // signature carries two unused low bits in its final character, so decoding
+  // first would accept several distinct strings for one signature.
+  if (expected.length !== provided.length) return false;
 
-    // Keep comparison work independent of the first differing byte. Web Crypto
-    // is used here because this module also runs in the Next.js edge proxy.
-    let difference = 0;
-    for (let index = 0; index < expectedBytes.length; index += 1) {
-      difference |= expectedBytes[index] ^ providedBytes[index];
-    }
-    return difference === 0;
-  } catch {
-    return false;
+  // Keep comparison work independent of the first differing character. Web
+  // Crypto is used here because this module also runs in the Next.js edge proxy.
+  let difference = 0;
+  for (let index = 0; index < expected.length; index += 1) {
+    difference |= expected.charCodeAt(index) ^ provided.charCodeAt(index);
   }
+  return difference === 0;
 }
 
 /** Create a signed, tamper-evident session token (stateless). */

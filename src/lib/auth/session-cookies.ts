@@ -49,6 +49,22 @@ export async function requireFinancialManager(): Promise<SessionPayload> {
   return session;
 }
 
+/** Customer conversations and internal notes are limited to inbox operators. */
+export async function requireInboxOperator(): Promise<SessionPayload> {
+  const session = await requireSession();
+  if (!isDbEnabled) {
+    if (!["Owner", "Admin", "Agent"].includes(session.role ?? "")) {
+      throw new Error("Owner, Admin, or Agent access required");
+    }
+    return session;
+  }
+  const user = await findActiveUserBySession(session.userId, session.workspaceId);
+  if (!user || !["Owner", "Admin", "Agent"].includes(user.role)) {
+    throw new Error("Owner, Admin, or Agent access required");
+  }
+  return session;
+}
+
 export async function setSessionCookie(token: string) {
   const store = await cookies();
   store.set(SESSION_COOKIE, token, {

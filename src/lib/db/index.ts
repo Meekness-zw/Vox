@@ -102,10 +102,129 @@ create table if not exists conversations (
   transcript jsonb not null default '[]'::jsonb
 );
 alter table conversations add column if not exists workspace_id text not null default 'ws_demo';
+alter table conversations add column if not exists inbox_status text not null default 'ai_active';
+alter table conversations add column if not exists bot_mode text not null default 'active';
+alter table conversations add column if not exists priority text not null default 'normal';
+alter table conversations add column if not exists assigned_user_id text;
+alter table conversations add column if not exists assigned_at timestamptz;
+alter table conversations add column if not exists handoff_reason text;
+alter table conversations add column if not exists handoff_requested_at timestamptz;
+alter table conversations add column if not exists human_first_response_at timestamptz;
+alter table conversations add column if not exists resolved_at timestamptz;
+alter table conversations add column if not exists business_address text;
+alter table conversations add column if not exists last_message_at timestamptz;
+alter table conversations add column if not exists last_message_preview text not null default '';
+alter table conversations add column if not exists state_version bigint not null default 0;
+alter table conversations add column if not exists updated_at timestamptz not null default now();
+update conversations set last_message_at=started_at where last_message_at is null;
+alter table conversations alter column last_message_at set default now();
+alter table conversations alter column last_message_at set not null;
 
 create index if not exists conversations_agent_idx on conversations (agent_id);
 create index if not exists conversations_started_idx on conversations (started_at desc);
 create index if not exists conversations_ws_idx on conversations (workspace_id);
+create index if not exists conversations_inbox_idx
+  on conversations (workspace_id, inbox_status, priority, last_message_at desc);
+create index if not exists conversations_assignee_idx
+  on conversations (workspace_id, assigned_user_id, inbox_status, last_message_at desc);
+
+-- Message bodies are immutable timeline records. Delivery columns may advance
+-- as the provider reports queued/sent/delivered/read/failed states.
+create table if not exists conversation_messages (
+  id text primary key,
+  sequence_no bigint generated always as identity,
+  workspace_id text not null,
+  conversation_id text not null,
+  channel text not null,
+  direction text not null,
+  author_type text not null,
+  author_user_id text,
+  author_name text,
+  body text not null,
+  delivery_status text not null default 'received',
+  provider_message_sid text,
+  idempotency_key text,
+  delivery_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists conversation_messages_provider_sid_idx
+  on conversation_messages (workspace_id, provider_message_sid)
+  where provider_message_sid is not null;
+create unique index if not exists conversation_messages_idempotency_idx
+  on conversation_messages (workspace_id, idempotency_key)
+  where idempotency_key is not null;
+create index if not exists conversation_messages_thread_idx
+  on conversation_messages (workspace_id, conversation_id, sequence_no);
+
+-- One-time/idempotent bridge for conversations recorded before the normalized
+-- timeline existed. New channel code appends directly to conversation_messages.
+insert into conversation_messages
+  (id,workspace_id,conversation_id,channel,direction,author_type,body,delivery_status,created_at,updated_at)
+select 'legacy_' || md5(c.id || ':' || item.ordinality::text),c.workspace_id,c.id,c.channel,
+  case when item.value->>'role'='caller' then 'inbound' else 'outbound' end,
+  case when item.value->>'role'='caller' then 'customer' else 'bot' end,
+  item.value->>'text',
+  case when item.value->>'role'='caller' then 'received' else 'delivered' end,
+  c.started_at + ((item.ordinality - 1) * interval '1 millisecond'),
+  c.started_at + ((item.ordinality - 1) * interval '1 millisecond')
+from conversations c
+cross join lateral jsonb_array_elements(c.transcript) with ordinality as item(value,ordinality)
+where jsonb_typeof(c.transcript)='array' and btrim(coalesce(item.value->>'text',''))<>''
+on conflict do nothing;
+update conversations c set
+  last_message_at=coalesce((select m.created_at from conversation_messages m
+    where m.workspace_id=c.workspace_id and m.conversation_id=c.id
+    order by m.sequence_no desc limit 1),c.last_message_at),
+  last_message_preview=coalesce((select left(m.body,240) from conversation_messages m
+    where m.workspace_id=c.workspace_id and m.conversation_id=c.id
+    order by m.sequence_no desc limit 1),c.last_message_preview)
+where c.last_message_preview='';
+
+-- Notes are deliberately separate from customer-visible messages so no
+-- widget/provider endpoint can accidentally disclose internal discussion.
+create table if not exists conversation_notes (
+  id text primary key,
+  workspace_id text not null,
+  conversation_id text not null,
+  author_user_id text not null,
+  author_name text not null,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists conversation_notes_thread_idx
+  on conversation_notes (workspace_id, conversation_id, created_at);
+
+-- Read position is per team member. Reading a thread must not clear another
+-- team member's unread state.
+create table if not exists conversation_reads (
+  workspace_id text not null,
+  conversation_id text not null,
+  user_id text not null,
+  last_read_sequence bigint not null default 0,
+  read_at timestamptz not null default now(),
+  primary key (workspace_id, conversation_id, user_id)
+);
+create index if not exists conversation_reads_user_idx
+  on conversation_reads (workspace_id, user_id, read_at desc);
+
+create table if not exists inbox_notifications (
+  id text primary key,
+  workspace_id text not null,
+  user_id text not null,
+  conversation_id text,
+  type text not null,
+  title text not null,
+  body text not null,
+  dedupe_key text,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists inbox_notifications_dedupe_idx
+  on inbox_notifications (workspace_id, user_id, dedupe_key)
+  where dedupe_key is not null;
+create index if not exists inbox_notifications_user_idx
+  on inbox_notifications (workspace_id, user_id, read_at, created_at desc);
 
 create table if not exists knowledge_sources (
   id text primary key,
@@ -474,6 +593,55 @@ do $$ begin
   alter table agents add constraint agents_status_check check (status in ('active','draft','paused'));
 exception when duplicate_object then null; end $$;
 do $$ begin
+  alter table conversations add constraint conversations_channel_check check (channel in ('voice','chat','sms','whatsapp'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversations add constraint conversations_inbox_status_check check (inbox_status in ('ai_active','needs_human','human_active','resolved'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversations add constraint conversations_bot_mode_check check (bot_mode in ('active','paused'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversations add constraint conversations_priority_check check (priority in ('low','normal','high','urgent'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversations add constraint conversations_automation_state_check check (
+    (inbox_status='ai_active' and bot_mode='active') or
+    (inbox_status in ('needs_human','human_active') and bot_mode='paused') or
+    inbox_status='resolved'
+  );
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversations add constraint conversations_state_version_check check (state_version >= 0);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_messages add constraint conversation_messages_channel_check check (channel in ('voice','chat','sms','whatsapp'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_messages add constraint conversation_messages_direction_check check (direction in ('inbound','outbound','internal'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_messages add constraint conversation_messages_author_check check (author_type in ('customer','bot','human','system'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_messages add constraint conversation_messages_delivery_check check (delivery_status in ('received','pending','queued','sent','delivered','read','failed'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_messages add constraint conversation_messages_body_check check (char_length(btrim(body)) between 1 and 10000);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_messages add constraint conversation_messages_human_author_check check (
+    (author_type='human' and author_user_id is not null) or
+    (author_type<>'human' and author_user_id is null)
+  );
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_notes add constraint conversation_notes_body_check check (char_length(btrim(body)) between 1 and 10000);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_reads add constraint conversation_reads_sequence_check check (last_read_sequence >= 0);
+exception when duplicate_object then null; end $$;
+do $$ begin
   alter table phone_numbers add constraint phone_numbers_channel_check check (channel in ('voice','whatsapp'));
 exception when duplicate_object then null; end $$;
 do $$ begin
@@ -537,7 +705,8 @@ do $$ declare table_name text; begin
     'voice_call_sessions','client_invoices','document_templates','business_documents',
     'team_invitations','widget_configs','crm_connections','crm_deliveries','audit_events',
     'accounting_settings','accounting_accounts','journal_entries','journal_lines','business_analyses',
-    'business_research_usage'
+    'business_research_usage','conversation_messages','conversation_notes','conversation_reads',
+    'inbox_notifications'
   ] loop
     begin
       execute format(
@@ -548,6 +717,48 @@ do $$ declare table_name text; begin
     end;
   end loop;
 end $$;
+do $$ begin
+  alter table users add constraint users_id_workspace_unique unique (id,workspace_id);
+exception when duplicate_object or duplicate_table then null; end $$;
+do $$ begin
+  alter table conversations add constraint conversations_id_workspace_unique unique (id,workspace_id);
+exception when duplicate_object or duplicate_table then null; end $$;
+do $$ begin
+  alter table conversations add constraint conversations_assigned_user_workspace_fk
+    foreign key (assigned_user_id,workspace_id) references users(id,workspace_id);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_messages add constraint conversation_messages_conversation_workspace_fk
+    foreign key (conversation_id,workspace_id) references conversations(id,workspace_id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_messages add constraint conversation_messages_author_user_workspace_fk
+    foreign key (author_user_id,workspace_id) references users(id,workspace_id);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_notes add constraint conversation_notes_conversation_workspace_fk
+    foreign key (conversation_id,workspace_id) references conversations(id,workspace_id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_notes add constraint conversation_notes_author_user_workspace_fk
+    foreign key (author_user_id,workspace_id) references users(id,workspace_id);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_reads add constraint conversation_reads_conversation_workspace_fk
+    foreign key (conversation_id,workspace_id) references conversations(id,workspace_id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table conversation_reads add constraint conversation_reads_user_workspace_fk
+    foreign key (user_id,workspace_id) references users(id,workspace_id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table inbox_notifications add constraint inbox_notifications_user_workspace_fk
+    foreign key (user_id,workspace_id) references users(id,workspace_id) on delete cascade;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table inbox_notifications add constraint inbox_notifications_conversation_workspace_fk
+    foreign key (conversation_id,workspace_id) references conversations(id,workspace_id) on delete cascade;
+exception when duplicate_object then null; end $$;
 do $$ begin
   alter table journal_lines add constraint journal_lines_entry_workspace_fk
     foreign key (entry_id,workspace_id) references journal_entries(id,workspace_id) on delete cascade;
@@ -656,6 +867,10 @@ alter table journal_entries enable row level security;
 alter table journal_lines enable row level security;
 alter table business_analyses enable row level security;
 alter table business_research_usage enable row level security;
+alter table conversation_messages enable row level security;
+alter table conversation_notes enable row level security;
+alter table conversation_reads enable row level security;
+alter table inbox_notifications enable row level security;
 `;
 
 export async function initSchema() {

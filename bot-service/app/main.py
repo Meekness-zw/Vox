@@ -592,7 +592,7 @@ async def speak_to_twilio(
 async def streamed_bot_reply(
     params: dict[str, str], messages: list[dict[str, str]], started_at: str,
     language_mode: str = "auto",
-) -> str:
+) -> tuple[str, bool, bool]:
     app_url = os.getenv("VOX_APP_URL", "").strip().rstrip("/")
     if not app_url:
         raise RuntimeError("VOX_APP_URL is required for live call reasoning")
@@ -602,11 +602,17 @@ async def streamed_bot_reply(
         json={
             "workspaceId": params["workspaceId"], "agentId": params["agentId"],
             "callSid": params["callSid"], "caller": params.get("caller", ""),
+            "called": params.get("called", ""),
             "startedAt": started_at, "messages": messages, "languageMode": language_mode,
         },
     )
     response.raise_for_status()
-    return (response.json().get("reply") or "").strip()
+    result = response.json()
+    return (
+        (result.get("reply") or "").strip(),
+        bool(result.get("transferring")),
+        bool(result.get("paused")),
+    )
 
 
 @app.websocket("/v1/twilio-media")
@@ -637,7 +643,11 @@ async def twilio_media(websocket: WebSocket) -> None:
             else:
                 language_mode = choose_call_language(transcript, language_mode)
             messages.append({"role": "user", "content": transcript})
-            reply_text = await streamed_bot_reply(params, messages, started_at, language_mode)
+            reply_text, transferring, paused = await streamed_bot_reply(
+                params, messages, started_at, language_mode
+            )
+            if paused:
+                return
             if not reply_text:
                 reply_text = (
                     "Pamusoroi, handina kukwanisa kupindura izvozvi. Ndapota edzai zvakare."
@@ -645,6 +655,8 @@ async def twilio_media(websocket: WebSocket) -> None:
                     "Sorry, I couldn't respond just now. Please try that again."
                 )
             messages.append({"role": "assistant", "content": reply_text})
+            if transferring:
+                return
             playback_task = asyncio.create_task(
                 speak_to_twilio(
                     websocket, stream_sid, reply_text, params.get("voiceId", "")

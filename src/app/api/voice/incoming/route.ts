@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   const agentId = url.searchParams.get("agentId") ?? route?.agentId;
 
   const agent = workspaceId && agentId ? await getAgentById(agentId, workspaceId) : undefined;
-  if (!agent) {
+  if (!agent || agent.status !== "active") {
     return sayAndGather(
       "Sorry, this number isn't set up yet. Please try again later.",
       "/api/voice/incoming"
@@ -59,13 +59,13 @@ export async function POST(req: Request) {
     const payload = `${callSid}.${workspaceId}.${agent.id}.${expires}`;
     const token = createHmac("sha256", serviceToken).update(payload).digest("hex");
     return connectMediaStream(streamUrl, {
-      callSid, workspaceId, agentId: agent.id, caller: from,
+      callSid, workspaceId, agentId: agent.id, caller: from, called: to,
       greeting: agent.greeting.slice(0, 400), language: agent.language.slice(0, 100),
       voiceId: resolveElevenLabsVoiceId(agent.voice),
       expires, token,
     });
   }
 
-  const action = `/api/voice/respond?agentId=${encodeURIComponent(agent.id)}`;
+  const action = `/api/voice/respond?agentId=${encodeURIComponent(agent.id)}&turn=1`;
   return sayAndGather(agent.greeting, action, agent.language);
 }

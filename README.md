@@ -20,7 +20,9 @@ document, billing, and audit records.
   outcome charts (Recharts)
 - **Agents** — list + **Agent Builder** (prompt editor, voice, personality,
   language, business hours, escalation) with a **live test panel**
-- **Conversations** — transcripts, AI summaries, action items, sentiment
+- **Team Inbox** — live WhatsApp, SMS, website-chat, and call timelines with
+  per-user unread state, assignment, priority, internal notes, AI pause/resume,
+  human replies, delivery status, and failed-transfer callback cases
 - **Knowledge Base** — pasted documents, FAQs, website URLs, CSV text, and
   manual Q&A, indexed with tenant-scoped multilingual retrieval
 - **SMS Messaging** — send and record messages through each workspace's assigned Twilio number
@@ -62,12 +64,16 @@ channels behave identically. The dialed number is looked up in `phone_numbers`
 workspace + agent, so each business's own number reaches its own agent,
 knowledge base, calendar, and invoices — not a shared demo workspace.
 
-**3. WhatsApp** — `POST /api/whatsapp/incoming` runs the same agent brain over
-a Twilio WhatsApp sender. Since WhatsApp has no call-session concept, each
-turn loads/saves the conversation thread from Postgres (`wa_<workspace>_<from>`)
-instead of an in-memory session, and replies synchronously via TwiML
-`<Message>` — no separate Twilio REST call needed. Threads show up in the
-Conversations dashboard automatically (channel: "whatsapp").
+**3. Messaging + human takeover** — `POST /api/whatsapp/incoming` and
+`POST /api/sms/incoming` run the same agent brain over the Twilio sender
+assigned to that workspace. Every turn is appended to tenant-scoped message
+rows instead of relying on one mutable transcript blob. A confirmed request
+for a person pauses AI, alerts active Owners/Admins/Agents, and moves the case
+to `/dashboard/conversations`. Staff can claim it, add private notes, reply via
+the original WhatsApp/SMS sender, see Twilio delivery state, resolve it, and
+explicitly return it to AI. Website widgets poll the same public timeline so a
+staff reply appears in the visitor's existing chat. Failed live-call transfers
+become high-priority callback cases.
 
 **4. Real appointment booking (Google Calendar)** — agents can actually book,
 not just talk about it. `src/lib/agent-tools.ts` exposes `check_availability`
@@ -134,7 +140,7 @@ Build: `npm run build` · Start: `npm start`
 
 See `.env.example` for the full list. Set `AI_GATEWAY_API_KEY` to route agents
 through a real model, `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/
-`TWILIO_PHONE_NUMBER`/`TWILIO_WHATSAPP_NUMBER` for voice + WhatsApp,
+`TWILIO_PHONE_NUMBER`/`TWILIO_WHATSAPP_NUMBER` for voice, SMS, and WhatsApp,
 `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`TOKEN_ENCRYPTION_KEY` for Google
 Calendar booking, `RESEND_API_KEY` to email invoices, and the `STRIPE_*` keys
 to enable real checkout on the Billing page.
@@ -202,9 +208,10 @@ OIDC token without an explicit key.
 
 ## Production notes
 
-Auth + multi-tenancy, RAG, conversation capture, analytics, Media Streams
-voice, WhatsApp, Google Calendar, documents, Stripe, Twilio number purchasing,
-and WhatsApp sender onboarding are wired end-to-end.
+Auth + multi-tenancy, RAG, conversation capture, analytics, Team Inbox human
+takeover, Media Streams voice, SMS, WhatsApp, Google Calendar, documents,
+Stripe, Twilio number purchasing, and WhatsApp sender onboarding are wired
+end-to-end.
 
 - **Secrets are mandatory** — configure `SESSION_SECRET`,
   `VOX_BOT_SERVICE_TOKEN`, `TWILIO_AUTH_TOKEN`, and `TOKEN_ENCRYPTION_KEY` in

@@ -104,7 +104,11 @@ export async function provisionClientNumbers(formData: FormData) {
   const request = await getAdminBotRequest(id);
   if (!request?.agentId) throw new Error("Build the bot before assigning numbers.");
   if (!/^\+\d{8,15}$/.test(routingPhone)) throw new Error("Enter a valid Twilio routing number.");
-  const owned = await configureOwnedVoiceNumber(routingPhone, `Vox · ${request.businessName}`);
+  const owned = await configureOwnedVoiceNumber(
+    routingPhone,
+    `Vox · ${request.businessName}`,
+    request.channels.includes("SMS")
+  );
   if (request.channels.includes("SMS") && owned.capabilities?.sms === false) {
     throw new Error("This Twilio number cannot send SMS. Choose an SMS-capable number for this bot.");
   }

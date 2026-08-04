@@ -46,23 +46,41 @@ export function whatsappWebhookUrl() {
   return new URL("/api/whatsapp/incoming", base).toString();
 }
 
-export async function configureOwnedVoiceNumber(phoneNumber: string, friendlyName: string) {
+export function smsWebhookUrl() {
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (!base) throw new Error("NEXT_PUBLIC_APP_URL is required for Twilio onboarding.");
+  return new URL("/api/sms/incoming", base).toString();
+}
+
+export async function configureOwnedVoiceNumber(
+  phoneNumber: string,
+  friendlyName: string,
+  smsEnabled = false
+) {
   const { accountSid } = credentials();
   const list = await twilioJson<{ incoming_phone_numbers?: TwilioVoiceNumber[] }>(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(phoneNumber)}`
   );
   const owned = list.incoming_phone_numbers?.[0];
   if (!owned) throw new Error("That number is not owned by this Twilio account.");
+  if (smsEnabled && owned.capabilities?.sms === false) {
+    throw new Error("That Twilio number is not SMS-capable.");
+  }
+  const params = new URLSearchParams({
+    FriendlyName: friendlyName,
+    VoiceUrl: voiceWebhookUrl(),
+    VoiceMethod: "POST",
+  });
+  if (smsEnabled) {
+    params.set("SmsUrl", smsWebhookUrl());
+    params.set("SmsMethod", "POST");
+  }
   await twilioJson(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers/${owned.sid}.json`,
     {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        FriendlyName: friendlyName,
-        VoiceUrl: voiceWebhookUrl(),
-        VoiceMethod: "POST",
-      }),
+      body: params,
     }
   );
   return owned;
@@ -87,17 +105,22 @@ export async function purchaseVoiceNumber(input: {
   if (!candidate?.phone_number) {
     throw new Error("Twilio has no matching voice number available. Try another country or area code.");
   }
+  const params = new URLSearchParams({
+    PhoneNumber: candidate.phone_number,
+    FriendlyName: input.friendlyName,
+    VoiceUrl: voiceWebhookUrl(),
+    VoiceMethod: "POST",
+  });
+  if (input.smsEnabled) {
+    params.set("SmsUrl", smsWebhookUrl());
+    params.set("SmsMethod", "POST");
+  }
   return twilioJson<TwilioVoiceNumber>(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers.json`,
     {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        PhoneNumber: candidate.phone_number,
-        FriendlyName: input.friendlyName,
-        VoiceUrl: voiceWebhookUrl(),
-        VoiceMethod: "POST",
-      }),
+      body: params,
     }
   );
 }

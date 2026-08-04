@@ -13,6 +13,7 @@
     "test": "node --experimental-strip-types scripts/test-core.mjs && PYTHONPATH=bot-service bot-service/.venv/bin/python -m unittest discover -s bot-service/tests -v",
     "db:migrate": "node --env-file=.env --experimental-strip-types scripts/apply-schema.mjs",
     "test:database": "node --env-file=.env --experimental-strip-types scripts/test-database.mjs",
+    "test:inbox": "node --env-file=.env --experimental-strip-types scripts/test-inbox.mjs",
     "test:bookkeeping": "node --env-file=.env --experimental-strip-types scripts/test-bookkeeping.mjs",
     "test:deployments": "node --env-file=.env scripts/test-deployments.mjs"
   },

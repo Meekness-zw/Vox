@@ -29,6 +29,86 @@ export type Conversation = {
   transcript: { role: "agent" | "caller"; text: string }[];
 };
 
+export type InboxStatus =
+  | "ai_active"
+  | "needs_human"
+  | "human_active"
+  | "resolved";
+
+export type ConversationBotMode = "active" | "paused";
+export type ConversationPriority = "low" | "normal" | "high" | "urgent";
+export type ConversationMessageAuthor = "customer" | "bot" | "human" | "system";
+export type ConversationMessageDirection = "inbound" | "outbound" | "internal";
+export type ConversationMessageDelivery =
+  | "received"
+  | "pending"
+  | "queued"
+  | "sent"
+  | "delivered"
+  | "read"
+  | "failed";
+
+export type ConversationMessage = {
+  id: string;
+  workspaceId: string;
+  conversationId: string;
+  sequence: number;
+  channel: Conversation["channel"];
+  direction: ConversationMessageDirection;
+  authorType: ConversationMessageAuthor;
+  authorUserId?: string;
+  authorName?: string;
+  body: string;
+  deliveryStatus: ConversationMessageDelivery;
+  providerMessageSid?: string;
+  idempotencyKey?: string;
+  deliveryError?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ConversationNote = {
+  id: string;
+  workspaceId: string;
+  conversationId: string;
+  authorUserId: string;
+  authorName: string;
+  body: string;
+  createdAt: string;
+};
+
+export type InboxConversation = Conversation & {
+  workspaceId: string;
+  businessAddress?: string;
+  inboxStatus: InboxStatus;
+  botMode: ConversationBotMode;
+  priority: ConversationPriority;
+  assignedUserId?: string;
+  assignedUserName?: string;
+  handoffReason?: string;
+  handoffRequestedAt?: string;
+  humanFirstResponseAt?: string;
+  resolvedAt?: string;
+  lastMessageAt: string;
+  lastMessagePreview: string;
+  stateVersion: number;
+  unreadCount: number;
+  messages: ConversationMessage[];
+  notes: ConversationNote[];
+};
+
+export type InboxNotification = {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  conversationId?: string;
+  type: string;
+  title: string;
+  body: string;
+  readAt?: string;
+  createdAt: string;
+};
+
 export type KnowledgeSource = {
   id: string;
   name: string;

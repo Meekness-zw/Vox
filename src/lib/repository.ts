@@ -21,11 +21,23 @@ import type {
   SubscriptionStatus,
   BusinessDocument,
   DocumentTemplate,
+  ConversationMessage,
+  ConversationMessageAuthor,
+  ConversationMessageDelivery,
+  ConversationMessageDirection,
+  ConversationNote,
+  ConversationBotMode,
+  ConversationPriority,
+  InboxConversation,
+  InboxNotification,
+  InboxStatus,
 } from "@/lib/types";
 
 const demoBotRequests: BotRequest[] = [];
 const demoBusinessDocuments: BusinessDocument[] = [];
 const demoDocumentTemplates = new Map<string, DocumentTemplate>();
+const demoInbox = new Map<string, InboxConversation>();
+const demoInboxNotifications: InboxNotification[] = [];
 
 function requireAdminDatabase() {
   if (!sql) {
@@ -41,6 +53,7 @@ export type WorkspaceUser = {
   name: string;
   email: string;
   role: string;
+  status: string;
 };
 
 /* ---- row mappers ---------------------------------------------------------- */
@@ -49,10 +62,10 @@ export async function listWorkspaceUsers(
   workspaceId = "ws_demo"
 ): Promise<WorkspaceUser[]> {
   if (!sql) {
-    return [{ id: "u_demo", name: "Demo User", email: "demo@vox.ai", role: "Owner" }];
+    return [{ id: "u_demo", name: "Demo User", email: "demo@vox.ai", role: "Owner", status: "active" }];
   }
   const rows = await sql`
-    select id, name, email, role
+    select id, name, email, role, status
     from users
     where workspace_id = ${workspaceId} and status='active'
     order by created_at
@@ -62,6 +75,7 @@ export async function listWorkspaceUsers(
     name: row.name as string,
     email: row.email as string,
     role: row.role as string,
+    status: row.status as string,
   }));
 }
 
@@ -164,7 +178,7 @@ function normalizePhoneNumber(number: string) {
  */
 export async function getRoutingForNumber(
   number: string,
-  channel: "voice" | "whatsapp"
+  channel: "voice" | "whatsapp" | "sms"
 ): Promise<NumberRoute | null> {
   if (!sql) {
     const agentType = channel === "voice" ? "voice" : "chat";
@@ -174,10 +188,12 @@ export async function getRoutingForNumber(
     return agent ? { workspaceId: "ws_demo", agentId: agent.id } : null;
   }
   const normalized = normalizePhoneNumber(number);
+  const routingChannel = channel === "sms" ? "voice" : channel;
   const rows = await sql`
-    select workspace_id, agent_id from phone_numbers
-    where regexp_replace(number, '[^0-9+]', '', 'g') = ${normalized}
-      and channel = ${channel} limit 1
+    select p.workspace_id, p.agent_id from phone_numbers p
+    join agents a on a.id=p.agent_id and a.workspace_id=p.workspace_id and a.status='active'
+    where regexp_replace(p.number, '[^0-9+]', '', 'g') = ${normalized}
+      and p.channel = ${routingChannel} limit 1
   `;
   return rows.length
     ? { workspaceId: rows[0].workspace_id as string, agentId: rows[0].agent_id as string }
@@ -192,17 +208,22 @@ export async function upsertPhoneNumber(entry: {
 }, workspaceId = "ws_demo"): Promise<void> {
   if (!sql) return;
   const normalized = normalizePhoneNumber(entry.number);
-  await sql`
+  const rows = await sql`
     insert into phone_numbers (id, workspace_id, number, channel, agent_id)
     values (${entry.id}, ${workspaceId}, ${normalized}, ${entry.channel}, ${entry.agentId})
     on conflict (number, channel) do update set
       agent_id = excluded.agent_id, workspace_id = excluded.workspace_id
+    where phone_numbers.workspace_id = excluded.workspace_id
+    returning id
   `;
+  if (!rows.length) {
+    throw new Error("That phone number is already assigned to another Vox workspace.");
+  }
 }
 
 export async function getWorkspaceSendingNumber(
   workspaceId: string,
-  preferredChannel: "voice" | "whatsapp" = "voice"
+  preferredChannel: "voice" | "whatsapp" | "sms" = "voice"
 ): Promise<string | null> {
   if (!sql) {
     const configured = preferredChannel === "whatsapp"
@@ -210,9 +231,26 @@ export async function getWorkspaceSendingNumber(
       : process.env.TWILIO_PHONE_NUMBER;
     return configured?.trim() || null;
   }
+  const routingChannel = preferredChannel === "sms" ? "voice" : preferredChannel;
   const rows = await sql`
     select number from phone_numbers
-    where workspace_id = ${workspaceId} and channel = ${preferredChannel}
+    where workspace_id = ${workspaceId} and channel = ${routingChannel}
+    order by created_at asc limit 1
+  `;
+  return rows.length ? String(rows[0].number) : null;
+}
+
+/** Prefer the exact bot's sender when a workspace owns more than one bot. */
+export async function getAgentSendingNumber(
+  workspaceId: string,
+  agentId: string,
+  preferredChannel: "voice" | "whatsapp" | "sms"
+): Promise<string | null> {
+  if (!sql) return getWorkspaceSendingNumber(workspaceId, preferredChannel);
+  const routingChannel = preferredChannel === "sms" ? "voice" : preferredChannel;
+  const rows = await sql`
+    select number from phone_numbers
+    where workspace_id=${workspaceId} and agent_id=${agentId} and channel=${routingChannel}
     order by created_at asc limit 1
   `;
   return rows.length ? String(rows[0].number) : null;
@@ -1377,6 +1415,787 @@ export async function listAuditEvents(workspaceId: string) {
     select * from audit_events where workspace_id=${workspaceId}
     order by created_at desc limit 25
   `;
+}
+
+/* ---- team inbox and human handoff ---------------------------------------- */
+
+export type ConversationAutomationState = {
+  id: string;
+  workspaceId: string;
+  inboxStatus: InboxStatus;
+  botMode: ConversationBotMode;
+  priority: ConversationPriority;
+  assignedUserId?: string;
+  stateVersion: number;
+};
+
+type EnsureInboxConversationInput = {
+  id: string;
+  workspaceId: string;
+  agentId: string;
+  channel: Conversation["channel"];
+  contact: string;
+  startedAt?: string;
+  businessAddress?: string;
+};
+
+export type AppendConversationMessageInput = {
+  id?: string;
+  workspaceId: string;
+  conversationId: string;
+  authorType: ConversationMessageAuthor;
+  authorUserId?: string;
+  authorName?: string;
+  body: string;
+  channel: Conversation["channel"];
+  direction?: ConversationMessageDirection;
+  deliveryStatus?: ConversationMessageDelivery;
+  providerMessageSid?: string;
+  idempotencyKey?: string;
+};
+
+function isoDate(value: unknown) {
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function rowToConversationMessage(row: Record<string, unknown>): ConversationMessage {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    conversationId: String(row.conversation_id),
+    sequence: Number(row.sequence_no),
+    channel: row.channel as Conversation["channel"],
+    direction: row.direction as ConversationMessageDirection,
+    authorType: row.author_type as ConversationMessageAuthor,
+    authorUserId: row.author_user_id ? String(row.author_user_id) : undefined,
+    authorName: row.author_name ? String(row.author_name) : undefined,
+    body: String(row.body),
+    deliveryStatus: row.delivery_status as ConversationMessageDelivery,
+    providerMessageSid: row.provider_message_sid ? String(row.provider_message_sid) : undefined,
+    idempotencyKey: row.idempotency_key ? String(row.idempotency_key) : undefined,
+    deliveryError: row.delivery_error ? String(row.delivery_error) : undefined,
+    createdAt: isoDate(row.created_at),
+    updatedAt: isoDate(row.updated_at),
+  };
+}
+
+function rowToConversationNote(row: Record<string, unknown>): ConversationNote {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    conversationId: String(row.conversation_id),
+    authorUserId: String(row.author_user_id),
+    authorName: String(row.author_name),
+    body: String(row.body),
+    createdAt: isoDate(row.created_at),
+  };
+}
+
+function rowToNotification(row: Record<string, unknown>): InboxNotification {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    userId: String(row.user_id),
+    conversationId: row.conversation_id ? String(row.conversation_id) : undefined,
+    type: String(row.type),
+    title: String(row.title),
+    body: String(row.body),
+    readAt: row.read_at ? isoDate(row.read_at) : undefined,
+    createdAt: isoDate(row.created_at),
+  };
+}
+
+function automationState(row: Record<string, unknown>): ConversationAutomationState {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    inboxStatus: row.inbox_status as InboxStatus,
+    botMode: row.bot_mode as ConversationBotMode,
+    priority: row.priority as ConversationPriority,
+    assignedUserId: row.assigned_user_id ? String(row.assigned_user_id) : undefined,
+    stateVersion: Number(row.state_version),
+  };
+}
+
+function demoInboxRecord(conversation: Conversation, workspaceId: string): InboxConversation {
+  const key = `${workspaceId}:${conversation.id}`;
+  const existing = demoInbox.get(key);
+  if (existing) return existing;
+  const messages: ConversationMessage[] = conversation.transcript.map((line, index) => ({
+    id: `demo_msg_${conversation.id}_${index}`,
+    workspaceId,
+    conversationId: conversation.id,
+    sequence: index + 1,
+    channel: conversation.channel,
+    direction: line.role === "caller" ? "inbound" : "outbound",
+    authorType: line.role === "caller" ? "customer" : "bot",
+    body: line.text,
+    deliveryStatus: line.role === "caller" ? "received" : "delivered",
+    createdAt: conversation.startedAt,
+    updatedAt: conversation.startedAt,
+  }));
+  const record: InboxConversation = {
+    ...conversation,
+    workspaceId,
+    inboxStatus: "ai_active",
+    botMode: "active",
+    priority: "normal",
+    lastMessageAt: conversation.startedAt,
+    lastMessagePreview: messages.at(-1)?.body ?? conversation.summary,
+    stateVersion: 0,
+    unreadCount: messages.filter((message) => message.direction === "inbound").length,
+    messages,
+    notes: [],
+  };
+  demoInbox.set(key, record);
+  return record;
+}
+
+function hydrateInboxConversation(
+  row: Record<string, unknown>,
+  messages: ConversationMessage[],
+  notes: ConversationNote[]
+): InboxConversation {
+  return {
+    ...rowToConversation(row),
+    workspaceId: String(row.workspace_id),
+    businessAddress: row.business_address ? String(row.business_address) : undefined,
+    inboxStatus: row.inbox_status as InboxStatus,
+    botMode: row.bot_mode as ConversationBotMode,
+    priority: row.priority as ConversationPriority,
+    assignedUserId: row.assigned_user_id ? String(row.assigned_user_id) : undefined,
+    assignedUserName: row.assigned_user_name ? String(row.assigned_user_name) : undefined,
+    handoffReason: row.handoff_reason ? String(row.handoff_reason) : undefined,
+    handoffRequestedAt: row.handoff_requested_at ? isoDate(row.handoff_requested_at) : undefined,
+    humanFirstResponseAt: row.human_first_response_at ? isoDate(row.human_first_response_at) : undefined,
+    resolvedAt: row.resolved_at ? isoDate(row.resolved_at) : undefined,
+    lastMessageAt: isoDate(row.last_message_at),
+    lastMessagePreview: String(row.last_message_preview ?? ""),
+    stateVersion: Number(row.state_version),
+    unreadCount: Number(row.unread_count ?? 0),
+    messages,
+    notes,
+  };
+}
+
+export async function ensureInboxConversation(
+  input: EnsureInboxConversationInput
+): Promise<ConversationAutomationState> {
+  if (!sql) {
+    const base: Conversation = {
+      id: input.id, agentId: input.agentId, channel: input.channel,
+      contact: input.contact, startedAt: input.startedAt ?? new Date().toISOString(),
+      durationSec: 0, sentiment: "neutral", outcome: "answered", summary: "",
+      actionItems: [], transcript: [],
+    };
+    const record = demoInboxRecord(base, input.workspaceId);
+    return {
+      id: record.id, workspaceId: record.workspaceId, inboxStatus: record.inboxStatus,
+      botMode: record.botMode, priority: record.priority,
+      assignedUserId: record.assignedUserId, stateVersion: record.stateVersion,
+    };
+  }
+  const rows = await sql`
+    insert into conversations (id,workspace_id,agent_id,channel,contact,started_at,
+      duration_sec,sentiment,outcome,summary,action_items,transcript,business_address,last_message_at)
+    values (${input.id},${input.workspaceId},${input.agentId},${input.channel},${input.contact},
+      ${input.startedAt ?? new Date().toISOString()},0,'neutral','answered','',${sql.json([])},
+      ${sql.json([])},${input.businessAddress ?? null},${input.startedAt ?? new Date().toISOString()})
+    on conflict (id) do update set
+      contact=excluded.contact,
+      business_address=coalesce(excluded.business_address,conversations.business_address),
+      updated_at=now()
+    where conversations.workspace_id=excluded.workspace_id
+      and conversations.agent_id=excluded.agent_id
+    returning *
+  `;
+  if (!rows.length) throw new Error("Conversation belongs to another workspace or agent.");
+  return automationState(rows[0]);
+}
+
+export async function listConversationMessages(
+  conversationId: string,
+  workspaceId: string,
+  options: { afterSequence?: number; limit?: number; customerVisibleOnly?: boolean } = {}
+): Promise<ConversationMessage[]> {
+  const after = Math.max(0, Math.floor(options.afterSequence ?? 0));
+  const limit = Math.min(500, Math.max(1, Math.floor(options.limit ?? 200)));
+  if (!sql) {
+    const record = demoInbox.get(`${workspaceId}:${conversationId}`) ??
+      mockConversations.find((conversation) => conversation.id === conversationId);
+    const messages: ConversationMessage[] = record && "messages" in record
+      ? record.messages as ConversationMessage[]
+      : record ? demoInboxRecord(record, workspaceId).messages : [];
+    return messages.filter((message) =>
+      message.sequence > after && (!options.customerVisibleOnly || message.authorType !== "system")
+    ).slice(0, limit);
+  }
+  const rows = await sql`
+    select * from conversation_messages
+    where workspace_id=${workspaceId} and conversation_id=${conversationId}
+      and sequence_no > ${after}
+      and (${Boolean(options.customerVisibleOnly)}=false or author_type<>'system')
+    order by sequence_no asc limit ${limit}
+  `;
+  return rows.map(rowToConversationMessage);
+}
+
+export async function appendConversationMessage(
+  input: AppendConversationMessageInput
+): Promise<{ message: ConversationMessage; created: boolean }> {
+  const body = input.body.trim();
+  if (!body || body.length > 10_000) throw new Error("Message must be between 1 and 10,000 characters.");
+  const id = input.id ?? `msg_${crypto.randomUUID()}`;
+  const direction = input.direction ?? (input.authorType === "customer" ? "inbound" : "outbound");
+  const deliveryStatus = input.deliveryStatus ?? (direction === "inbound" ? "received" : "pending");
+  if (input.authorType === "human" && !input.authorUserId) throw new Error("A human message requires an author.");
+  if (input.authorType !== "human" && input.authorUserId) throw new Error("Only human messages may have a user author.");
+
+  if (!sql) {
+    const key = `${input.workspaceId}:${input.conversationId}`;
+    const record = demoInbox.get(key);
+    if (!record) throw new Error("Conversation not found.");
+    const duplicate = record.messages.find((message) =>
+      message.id === id ||
+      Boolean(input.idempotencyKey && message.idempotencyKey === input.idempotencyKey) ||
+      Boolean(input.providerMessageSid && message.providerMessageSid === input.providerMessageSid)
+    );
+    if (duplicate) return { message: duplicate, created: false };
+    const now = new Date().toISOString();
+    const message: ConversationMessage = {
+      id, workspaceId: input.workspaceId, conversationId: input.conversationId,
+      sequence: (record.messages.at(-1)?.sequence ?? 0) + 1, channel: input.channel,
+      direction, authorType: input.authorType, authorUserId: input.authorUserId,
+      authorName: input.authorName, body, deliveryStatus,
+      providerMessageSid: input.providerMessageSid, idempotencyKey: input.idempotencyKey,
+      createdAt: now, updatedAt: now,
+    };
+    record.messages.push(message);
+    record.lastMessageAt = now;
+    record.lastMessagePreview = body.slice(0, 240);
+    if (direction === "inbound") record.unreadCount += 1;
+    if (record.inboxStatus === "resolved" && direction === "inbound") {
+      record.inboxStatus = "ai_active";
+      record.botMode = "active";
+      record.resolvedAt = undefined;
+      record.stateVersion += 1;
+    }
+    if (input.authorType === "human") {
+      record.inboxStatus = "human_active";
+      record.botMode = "paused";
+      record.assignedUserId ??= input.authorUserId;
+      record.humanFirstResponseAt ??= now;
+      record.stateVersion += 1;
+    }
+    return { message, created: true };
+  }
+
+  return sql.begin(async (tx) => {
+    const inserted = await tx`
+      insert into conversation_messages (id,workspace_id,conversation_id,channel,direction,
+        author_type,author_user_id,author_name,body,delivery_status,provider_message_sid,idempotency_key)
+      values (${id},${input.workspaceId},${input.conversationId},${input.channel},${direction},
+        ${input.authorType},${input.authorUserId ?? null},${input.authorName ?? null},${body},
+        ${deliveryStatus},${input.providerMessageSid ?? null},${input.idempotencyKey ?? null})
+      on conflict do nothing returning *
+    `;
+    let row = inserted[0];
+    if (!row) {
+      const existing = await tx`
+        select * from conversation_messages
+        where workspace_id=${input.workspaceId} and (
+          id=${id}
+          or (${input.idempotencyKey ?? null}::text is not null and idempotency_key=${input.idempotencyKey ?? null})
+          or (${input.providerMessageSid ?? null}::text is not null and provider_message_sid=${input.providerMessageSid ?? null})
+        ) order by sequence_no desc limit 1
+      `;
+      if (!existing.length) throw new Error("Message conflicts with another workspace record.");
+      return { message: rowToConversationMessage(existing[0]), created: false };
+    }
+    const transcriptRole = input.authorType === "customer" ? "caller" : "agent";
+    const human = input.authorType === "human";
+    const inbound = direction === "inbound";
+    const updated = await tx`
+      update conversations set
+        last_message_at=${row.created_at}, last_message_preview=${body.slice(0, 240)}, updated_at=now(),
+        transcript=case when ${input.authorType}='system' then transcript else
+          transcript || jsonb_build_array(jsonb_build_object('role',${transcriptRole}::text,'text',${body}::text)) end,
+        inbox_status=case
+          when ${human} then 'human_active'
+          when ${inbound} and inbox_status='resolved' then 'ai_active'
+          else inbox_status end,
+        bot_mode=case
+          when ${human} then 'paused'
+          when ${inbound} and inbox_status='resolved' then 'active'
+          else bot_mode end,
+        assigned_user_id=case when ${human} then coalesce(assigned_user_id,${input.authorUserId ?? null}) else assigned_user_id end,
+        assigned_at=case when ${human} then coalesce(assigned_at,now()) else assigned_at end,
+        human_first_response_at=case when ${human} then coalesce(human_first_response_at,now()) else human_first_response_at end,
+        resolved_at=case when ${inbound} and inbox_status='resolved' then null else resolved_at end,
+        state_version=state_version + case when ${human} or (${inbound} and inbox_status='resolved') then 1 else 0 end
+      where id=${input.conversationId} and workspace_id=${input.workspaceId}
+      returning id,inbox_status,bot_mode,assigned_user_id
+    `;
+    if (!updated.length) throw new Error("Conversation not found.");
+    if (inbound && (
+      updated[0].inbox_status === "needs_human" ||
+      updated[0].inbox_status === "human_active" ||
+      updated[0].bot_mode === "paused"
+    )) {
+      const assignedUserId = updated[0].assigned_user_id
+        ? String(updated[0].assigned_user_id)
+        : null;
+      await tx`
+        insert into inbox_notifications
+          (id,workspace_id,user_id,conversation_id,type,title,body,dedupe_key)
+        select 'ntf_' || gen_random_uuid()::text,${input.workspaceId},u.id,
+          ${input.conversationId},'customer_reply','New customer reply',
+          ${body.slice(0, 240)},${`message:${id}`}
+        from users u
+        where u.workspace_id=${input.workspaceId} and u.status='active'
+          and u.role in ('Owner','Admin','Agent')
+          and (
+            (${assignedUserId}::text is not null and u.id=${assignedUserId})
+            or (${assignedUserId}::text is null)
+          )
+        on conflict do nothing
+      `;
+    }
+    row = inserted[0];
+    return { message: rowToConversationMessage(row), created: true };
+  });
+}
+
+export async function appendBotMessageIfAutomationActive(
+  input: Omit<AppendConversationMessageInput, "authorType" | "authorUserId" | "direction"> & {
+    expectedStateVersion?: number;
+  }
+): Promise<{ message?: ConversationMessage; created: boolean; automationActive: boolean }> {
+  const body = input.body.trim();
+  if (!body || body.length > 10_000) throw new Error("Message must be between 1 and 10,000 characters.");
+  if (!sql) {
+    const record = demoInbox.get(`${input.workspaceId}:${input.conversationId}`);
+    const active = Boolean(record && record.inboxStatus === "ai_active" && record.botMode === "active" &&
+      (input.expectedStateVersion === undefined || record.stateVersion === input.expectedStateVersion));
+    if (!active) return { created: false, automationActive: false };
+    const result = await appendConversationMessage({ ...input, authorType: "bot", direction: "outbound" });
+    return { ...result, automationActive: true };
+  }
+  return sql.begin(async (tx) => {
+    const states = await tx`
+      select * from conversations
+      where id=${input.conversationId} and workspace_id=${input.workspaceId}
+      for update
+    `;
+    const state = states[0];
+    const active = Boolean(state && state.inbox_status === "ai_active" && state.bot_mode === "active" &&
+      (input.expectedStateVersion === undefined || Number(state.state_version) === input.expectedStateVersion));
+    if (!active) return { created: false, automationActive: false };
+    const id = input.id ?? `msg_${crypto.randomUUID()}`;
+    const inserted = await tx`
+      insert into conversation_messages (id,workspace_id,conversation_id,channel,direction,
+        author_type,author_name,body,delivery_status,provider_message_sid,idempotency_key)
+      values (${id},${input.workspaceId},${input.conversationId},${input.channel},'outbound','bot',
+        ${input.authorName ?? null},${body},${input.deliveryStatus ?? "pending"},
+        ${input.providerMessageSid ?? null},${input.idempotencyKey ?? null})
+      on conflict do nothing returning *
+    `;
+    if (!inserted.length) {
+      const existing = await tx`
+        select * from conversation_messages where workspace_id=${input.workspaceId} and (
+          id=${id}
+          or (${input.idempotencyKey ?? null}::text is not null and idempotency_key=${input.idempotencyKey ?? null})
+          or (${input.providerMessageSid ?? null}::text is not null and provider_message_sid=${input.providerMessageSid ?? null})
+        ) order by sequence_no desc limit 1
+      `;
+      return {
+        message: existing[0] ? rowToConversationMessage(existing[0]) : undefined,
+        created: false,
+        automationActive: true,
+      };
+    }
+    await tx`
+      update conversations set last_message_at=${inserted[0].created_at},
+        last_message_preview=${body.slice(0, 240)},updated_at=now(),
+        transcript=transcript || jsonb_build_array(jsonb_build_object('role','agent','text',${body}::text))
+      where id=${input.conversationId} and workspace_id=${input.workspaceId}
+    `;
+    return { message: rowToConversationMessage(inserted[0]), created: true, automationActive: true };
+  });
+}
+
+export async function getConversationAutomationState(
+  conversationId: string,
+  workspaceId: string
+): Promise<ConversationAutomationState | null> {
+  if (!sql) {
+    const record = demoInbox.get(`${workspaceId}:${conversationId}`);
+    return record ? {
+      id: record.id, workspaceId, inboxStatus: record.inboxStatus, botMode: record.botMode,
+      priority: record.priority, assignedUserId: record.assignedUserId, stateVersion: record.stateVersion,
+    } : null;
+  }
+  const rows = await sql`
+    select id,workspace_id,inbox_status,bot_mode,priority,assigned_user_id,state_version
+    from conversations where id=${conversationId} and workspace_id=${workspaceId} limit 1
+  `;
+  return rows[0] ? automationState(rows[0]) : null;
+}
+
+export async function listInboxConversations(
+  workspaceId: string,
+  userId: string
+): Promise<InboxConversation[]> {
+  if (!sql) return mockConversations.map((conversation) => demoInboxRecord(conversation, workspaceId));
+  const rows = await sql`
+    select c.*,u.name assigned_user_name,
+      coalesce((select count(*)::int from conversation_messages m
+        where m.workspace_id=c.workspace_id and m.conversation_id=c.id
+          and m.direction='inbound' and m.sequence_no>coalesce(cr.last_read_sequence,0)),0) unread_count
+    from conversations c
+    left join users u on u.id=c.assigned_user_id and u.workspace_id=c.workspace_id
+    left join conversation_reads cr on cr.workspace_id=c.workspace_id
+      and cr.conversation_id=c.id and cr.user_id=${userId}
+    where c.workspace_id=${workspaceId}
+    order by
+      case c.priority when 'urgent' then 0 when 'high' then 1 when 'normal' then 2 else 3 end,
+      c.last_message_at desc
+  `;
+  if (!rows.length) return [];
+  // List rows only need the latest preview. The selected thread is hydrated
+  // separately, avoiding an all-messages query on every 10-second inbox poll.
+  return rows.map((row) => hydrateInboxConversation(row, [], []));
+}
+
+export async function getInboxConversation(
+  id: string,
+  workspaceId: string,
+  userId: string
+): Promise<InboxConversation | undefined> {
+  if (!sql) {
+    const existing = demoInbox.get(`${workspaceId}:${id}`);
+    if (existing) return existing;
+    const base = mockConversations.find((conversation) => conversation.id === id);
+    return base ? demoInboxRecord(base, workspaceId) : undefined;
+  }
+  const rows = await sql`
+    select c.*,u.name assigned_user_name,
+      coalesce((select count(*)::int from conversation_messages m
+        where m.workspace_id=c.workspace_id and m.conversation_id=c.id
+          and m.direction='inbound' and m.sequence_no>coalesce(cr.last_read_sequence,0)),0) unread_count
+    from conversations c
+    left join users u on u.id=c.assigned_user_id and u.workspace_id=c.workspace_id
+    left join conversation_reads cr on cr.workspace_id=c.workspace_id
+      and cr.conversation_id=c.id and cr.user_id=${userId}
+    where c.id=${id} and c.workspace_id=${workspaceId} limit 1
+  `;
+  if (!rows.length) return undefined;
+  const [messages, notes] = await Promise.all([
+    listConversationMessages(id, workspaceId, { limit: 500 }),
+    sql`select * from conversation_notes where workspace_id=${workspaceId}
+      and conversation_id=${id} order by created_at asc`,
+  ]);
+  return hydrateInboxConversation(rows[0], messages, notes.map(rowToConversationNote));
+}
+
+export async function updateInboxConversationState(input: {
+  workspaceId: string;
+  conversationId: string;
+  inboxStatus?: InboxStatus;
+  botMode?: ConversationBotMode;
+  priority?: ConversationPriority;
+  assignedUserId?: string | null;
+  expectedStateVersion?: number;
+}): Promise<ConversationAutomationState | null> {
+  if (!sql) {
+    const record = demoInbox.get(`${input.workspaceId}:${input.conversationId}`);
+    if (!record || (input.expectedStateVersion !== undefined && record.stateVersion !== input.expectedStateVersion)) return null;
+    if (input.inboxStatus) record.inboxStatus = input.inboxStatus;
+    if (input.botMode) record.botMode = input.botMode;
+    if (input.priority) record.priority = input.priority;
+    if (input.assignedUserId !== undefined) record.assignedUserId = input.assignedUserId ?? undefined;
+    if (record.inboxStatus === "ai_active") record.botMode = input.botMode ?? "active";
+    if (["needs_human", "human_active"].includes(record.inboxStatus)) record.botMode = "paused";
+    record.resolvedAt = record.inboxStatus === "resolved" ? new Date().toISOString() : undefined;
+    record.stateVersion += 1;
+    return { id: record.id, workspaceId: record.workspaceId, inboxStatus: record.inboxStatus,
+      botMode: record.botMode, priority: record.priority, assignedUserId: record.assignedUserId,
+      stateVersion: record.stateVersion };
+  }
+  return sql.begin(async (tx) => {
+    const rows = await tx`
+      select * from conversations where id=${input.conversationId}
+        and workspace_id=${input.workspaceId} for update
+    `;
+    if (!rows.length) return null;
+    const current = rows[0];
+    if (input.expectedStateVersion !== undefined && Number(current.state_version) !== input.expectedStateVersion) return null;
+    const status = input.inboxStatus ?? current.inbox_status as InboxStatus;
+    const botMode = input.botMode ?? (status === "ai_active" ? "active" :
+      status === "needs_human" || status === "human_active" ? "paused" : current.bot_mode) as ConversationBotMode;
+    const priority = input.priority ?? current.priority as ConversationPriority;
+    const assigned = input.assignedUserId === undefined ? current.assigned_user_id : input.assignedUserId;
+    const updated = await tx`
+      update conversations set inbox_status=${status},bot_mode=${botMode},priority=${priority},
+        assigned_user_id=${assigned ?? null},
+        assigned_at=case when ${assigned ?? null}::text is null then null else coalesce(assigned_at,now()) end,
+        resolved_at=case when ${status}='resolved' then coalesce(resolved_at,now()) else null end,
+        state_version=state_version+1,updated_at=now()
+      where id=${input.conversationId} and workspace_id=${input.workspaceId}
+      returning *
+    `;
+    return automationState(updated[0]);
+  });
+}
+
+export const transitionInboxConversation = updateInboxConversationState;
+
+export async function setInboxPriority(input: {
+  workspaceId: string; conversationId: string; priority: ConversationPriority;
+}) {
+  return updateInboxConversationState(input);
+}
+
+export async function assignInboxConversation(input: {
+  workspaceId: string; conversationId: string; assignedUserId: string | null;
+}) {
+  return updateInboxConversationState(input);
+}
+
+export async function createHandoffNotifications(input: {
+  workspaceId: string;
+  conversationId: string;
+  title?: string;
+  body?: string;
+  dedupeKey?: string;
+}): Promise<number> {
+  if (!sql) return 0;
+  const rows = await sql`
+    insert into inbox_notifications (id,workspace_id,user_id,conversation_id,type,title,body,dedupe_key)
+    select 'ntf_' || gen_random_uuid()::text,${input.workspaceId},u.id,${input.conversationId},
+      'handoff_requested',${input.title ?? "A customer needs human help"},
+      ${input.body ?? "Open the team inbox to review and respond."},${input.dedupeKey ?? `handoff:${input.conversationId}`}
+    from users u where u.workspace_id=${input.workspaceId} and u.status='active'
+      and u.role in ('Owner','Admin','Agent')
+    on conflict do nothing returning id
+  `;
+  return rows.length;
+}
+
+export async function requestHumanHandoff(input: {
+  workspaceId: string;
+  conversationId: string;
+  reason?: string;
+  priority?: ConversationPriority;
+}): Promise<ConversationAutomationState | null> {
+  const current = await getConversationAutomationState(input.conversationId, input.workspaceId);
+  if (!current) return null;
+  const ranks: Record<ConversationPriority, number> = { low: 0, normal: 1, high: 2, urgent: 3 };
+  const requested = input.priority ?? "high";
+  const priority = ranks[current.priority] >= ranks[requested] ? current.priority : requested;
+  if (!sql) {
+    return updateInboxConversationState({ workspaceId: input.workspaceId,
+      conversationId: input.conversationId, inboxStatus: "needs_human", botMode: "paused", priority });
+  }
+  const rows = await sql`
+    update conversations set inbox_status='needs_human',bot_mode='paused',priority=case
+      when priority='urgent' or ${priority}='urgent' then 'urgent'
+      when priority='high' or ${priority}='high' then 'high'
+      when priority='normal' or ${priority}='normal' then 'normal'
+      else 'low' end,
+      handoff_reason=coalesce(nullif(${input.reason ?? ""},''),handoff_reason),
+      handoff_requested_at=case when inbox_status in ('ai_active','resolved') or handoff_requested_at is null
+        then now() else handoff_requested_at end,
+      resolved_at=null,state_version=state_version+1,updated_at=now()
+    where id=${input.conversationId} and workspace_id=${input.workspaceId}
+    returning *
+  `;
+  if (!rows.length) return null;
+  const requestedAt = isoDate(rows[0].handoff_requested_at);
+  await createHandoffNotifications({
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    body: input.reason?.trim() || "A customer asked to speak with the team.",
+    dedupeKey: `handoff:${input.conversationId}:${requestedAt}`,
+  });
+  return automationState(rows[0]);
+}
+
+export async function addConversationNote(input: {
+  workspaceId: string;
+  conversationId: string;
+  authorUserId: string;
+  authorName: string;
+  body: string;
+}): Promise<ConversationNote> {
+  const body = input.body.trim();
+  if (!body || body.length > 10_000) throw new Error("Note must be between 1 and 10,000 characters.");
+  const id = `note_${crypto.randomUUID()}`;
+  if (!sql) {
+    const record = demoInbox.get(`${input.workspaceId}:${input.conversationId}`);
+    if (!record) throw new Error("Conversation not found.");
+    const note: ConversationNote = { id, ...input, body, createdAt: new Date().toISOString() };
+    record.notes.push(note);
+    return note;
+  }
+  const rows = await sql`
+    insert into conversation_notes(id,workspace_id,conversation_id,author_user_id,author_name,body)
+    values(${id},${input.workspaceId},${input.conversationId},${input.authorUserId},${input.authorName},${body})
+    returning *
+  `;
+  return rowToConversationNote(rows[0]);
+}
+
+export async function markConversationRead(
+  conversationId: string,
+  workspaceId: string,
+  userId: string
+): Promise<number> {
+  if (!sql) {
+    const record = demoInbox.get(`${workspaceId}:${conversationId}`);
+    if (record) record.unreadCount = 0;
+    return record?.messages.at(-1)?.sequence ?? 0;
+  }
+  const rows = await sql`
+    insert into conversation_reads(workspace_id,conversation_id,user_id,last_read_sequence,read_at)
+    select ${workspaceId},${conversationId},${userId},
+      coalesce(max(sequence_no),0),now() from conversation_messages
+    where workspace_id=${workspaceId} and conversation_id=${conversationId}
+    on conflict(workspace_id,conversation_id,user_id) do update set
+      last_read_sequence=greatest(conversation_reads.last_read_sequence,excluded.last_read_sequence),
+      read_at=now()
+    returning last_read_sequence
+  `;
+  return Number(rows[0]?.last_read_sequence ?? 0);
+}
+
+export async function listNotifications(
+  workspaceId: string,
+  userId: string,
+  limit = 50
+): Promise<InboxNotification[]> {
+  if (!sql) return demoInboxNotifications.filter((item) =>
+    item.workspaceId === workspaceId && item.userId === userId
+  ).slice(0, limit);
+  const rows = await sql`
+    select * from inbox_notifications where workspace_id=${workspaceId} and user_id=${userId}
+    order by created_at desc limit ${Math.min(100, Math.max(1, Math.floor(limit)))}
+  `;
+  return rows.map(rowToNotification);
+}
+
+export async function getUnreadNotificationCount(workspaceId: string, userId: string): Promise<number> {
+  if (!sql) return demoInboxNotifications.filter((item) =>
+    item.workspaceId === workspaceId && item.userId === userId && !item.readAt
+  ).length;
+  const rows = await sql`
+    select count(*)::int count from inbox_notifications
+    where workspace_id=${workspaceId} and user_id=${userId} and read_at is null
+  `;
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function markNotificationRead(id: string, workspaceId: string, userId: string): Promise<boolean> {
+  if (!sql) {
+    const item = demoInboxNotifications.find((notification) => notification.id === id &&
+      notification.workspaceId === workspaceId && notification.userId === userId);
+    if (item) item.readAt = new Date().toISOString();
+    return Boolean(item);
+  }
+  const rows = await sql`
+    update inbox_notifications set read_at=coalesce(read_at,now())
+    where id=${id} and workspace_id=${workspaceId} and user_id=${userId} returning id
+  `;
+  return rows.length > 0;
+}
+
+function normalizeDeliveryStatus(status: string): ConversationMessageDelivery {
+  const value = status.toLowerCase();
+  if (value === "received") return "received";
+  if (["accepted", "scheduled", "queued", "sending"].includes(value)) return "queued";
+  if (value === "sent") return "sent";
+  if (value === "delivered") return "delivered";
+  if (value === "read") return "read";
+  if (["failed", "undelivered", "canceled", "cancelled"].includes(value)) return "failed";
+  return "pending";
+}
+
+export async function updateConversationMessageDelivery(input: {
+  messageId: string;
+  providerMessageSid?: string;
+  status: string;
+  error?: string;
+}): Promise<{ workspaceId: string; conversationId: string; message: ConversationMessage } | null> {
+  if (!sql) return null;
+  const next = normalizeDeliveryStatus(input.status);
+  return sql.begin(async (tx) => {
+    const rows = await tx`
+      select * from conversation_messages where id=${input.messageId}
+        and (${input.providerMessageSid ?? null}::text is null or provider_message_sid is null
+          or provider_message_sid=${input.providerMessageSid ?? null})
+      for update
+    `;
+    if (!rows.length) return null;
+    const current = rows[0].delivery_status as ConversationMessageDelivery;
+    const allowed: Record<ConversationMessageDelivery, ConversationMessageDelivery[]> = {
+      received: [],
+      pending: ["queued", "sent", "delivered", "read", "failed"],
+      queued: ["sent", "delivered", "read", "failed"],
+      sent: ["delivered", "read", "failed"],
+      delivered: ["read"],
+      read: [],
+      failed: [],
+    };
+    const status = current === next || allowed[current].includes(next) ? next : current;
+    const updated = await tx`
+      update conversation_messages set
+        provider_message_sid=coalesce(provider_message_sid,${input.providerMessageSid ?? null}),
+        delivery_status=${status},
+        delivery_error=case when ${status}='failed' then ${input.error ?? "Delivery failed"} else delivery_error end,
+        updated_at=now()
+      where id=${input.messageId} returning *
+    `;
+    const message = rowToConversationMessage(updated[0]);
+    if (status === "failed") {
+      await tx`
+        update conversations set priority=case when priority='urgent' then 'urgent' else 'high' end,
+          updated_at=now()
+        where id=${message.conversationId} and workspace_id=${message.workspaceId}
+      `;
+      await tx`
+        insert into inbox_notifications
+          (id,workspace_id,user_id,conversation_id,type,title,body,dedupe_key)
+        select 'ntf_' || gen_random_uuid()::text,${message.workspaceId},u.id,
+          ${message.conversationId},'delivery_failed','A customer reply failed to send',
+          ${input.error?.slice(0, 240) || "Open the Team Inbox to retry or contact the customer another way."},
+          ${`delivery:${message.id}:failed`}
+        from users u
+        join conversations c on c.id=${message.conversationId} and c.workspace_id=u.workspace_id
+        where u.workspace_id=${message.workspaceId} and u.status='active'
+          and u.role in ('Owner','Admin','Agent')
+          and (c.assigned_user_id is null or u.id=c.assigned_user_id)
+        on conflict do nothing
+      `;
+    }
+    return { workspaceId: message.workspaceId, conversationId: message.conversationId, message };
+  });
+}
+
+export async function updateConversationMessageDeliveryByProviderSid(input: {
+  workspaceId: string;
+  providerMessageSid: string;
+  status: string;
+  error?: string;
+}): Promise<{ workspaceId: string; conversationId: string; message: ConversationMessage } | null> {
+  if (!sql) return null;
+  const rows = await sql`
+    select id from conversation_messages where workspace_id=${input.workspaceId}
+      and provider_message_sid=${input.providerMessageSid} limit 1
+  `;
+  return rows[0] ? updateConversationMessageDelivery({
+    messageId: String(rows[0].id), providerMessageSid: input.providerMessageSid,
+    status: input.status, error: input.error,
+  }) : null;
 }
 
 export async function claimWebhookEvent(id: string, provider: string): Promise<{

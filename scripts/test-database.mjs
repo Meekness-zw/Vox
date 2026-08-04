@@ -14,7 +14,8 @@ try {
     "bot_requests", "company_profiles", "team_invitations", "widget_configs",
     "widget_rate_limits", "crm_connections", "crm_deliveries", "audit_events",
     "webhook_events", "accounting_settings", "accounting_accounts", "journal_entries", "journal_lines",
-    "business_analyses", "business_research_usage",
+    "business_analyses", "business_research_usage", "conversation_messages",
+    "conversation_notes", "conversation_reads", "inbox_notifications",
   ];
   const tables = await sql`
     select table_name from information_schema.tables
@@ -49,6 +50,15 @@ try {
       (select count(*)::int from business_analyses x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_business_analyses,
       (select count(*)::int from accounting_settings x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_accounting_settings,
       (select count(*)::int from business_research_usage x left join workspaces w on w.id=x.workspace_id where w.id is null) orphan_business_research_usage,
+      (select count(*)::int from conversation_messages m left join conversations c on c.id=m.conversation_id and c.workspace_id=m.workspace_id where c.id is null) orphan_conversation_messages,
+      (select count(*)::int from conversation_notes n left join conversations c on c.id=n.conversation_id and c.workspace_id=n.workspace_id where c.id is null) orphan_conversation_notes,
+      (select count(*)::int from conversation_reads r left join conversations c on c.id=r.conversation_id and c.workspace_id=r.workspace_id where c.id is null) orphan_conversation_reads,
+      (select count(*)::int from inbox_notifications n left join users u on u.id=n.user_id and u.workspace_id=n.workspace_id where u.id is null) orphan_inbox_notifications,
+      (select count(*)::int from conversations where inbox_status not in ('ai_active','needs_human','human_active','resolved')) invalid_inbox_status,
+      (select count(*)::int from conversations where bot_mode not in ('active','paused')) invalid_bot_mode,
+      (select count(*)::int from conversations where priority not in ('low','normal','high','urgent')) invalid_inbox_priority,
+      (select count(*)::int from conversation_messages where author_type not in ('customer','bot','human','system')) invalid_message_author,
+      (select count(*)::int from conversation_messages where delivery_status not in ('received','pending','queued','sent','delivered','read','failed')) invalid_message_delivery,
       (select count(*)::int from users where role not in ('Owner','Admin','Agent','Bookkeeper')) invalid_user_role
   `);
   for (const [name, count] of Object.entries(integrity)) {
@@ -64,6 +74,14 @@ try {
   const requiredConstraints = [
     "users_status_check", "users_role_check", "agents_type_check",
     "agents_status_check", "phone_numbers_channel_check",
+    "conversations_channel_check", "conversations_inbox_status_check",
+    "conversations_bot_mode_check", "conversations_priority_check",
+    "conversations_automation_state_check",
+    "conversations_state_version_check", "conversation_messages_channel_check",
+    "conversation_messages_direction_check", "conversation_messages_author_check",
+    "conversation_messages_delivery_check", "conversation_messages_body_check",
+    "conversation_messages_human_author_check", "conversation_notes_body_check",
+    "conversation_reads_sequence_check",
     "appointments_status_check", "bot_requests_status_check",
     "workspaces_subscription_status_check", "users_workspace_fk",
     "agents_workspace_fk", "conversations_workspace_fk",
@@ -75,6 +93,7 @@ try {
       "team_invitations", "widget_configs", "crm_connections", "crm_deliveries", "audit_events",
       "accounting_settings", "accounting_accounts", "journal_entries", "journal_lines", "business_analyses",
       "business_research_usage",
+      "conversation_messages", "conversation_notes", "conversation_reads", "inbox_notifications",
     ].map((table) => `${table}_workspace_fk`),
     "agents_id_workspace_unique", "conversations_agent_workspace_fk",
     "phone_numbers_agent_workspace_fk", "appointments_agent_workspace_fk",
@@ -84,6 +103,16 @@ try {
     "journal_entries_status_check", "journal_entries_direction_check",
     "journal_lines_amount_check", "business_analyses_kind_check",
     "business_research_usage_count_check",
+    "users_id_workspace_unique", "conversations_id_workspace_unique",
+    "conversations_assigned_user_workspace_fk",
+    "conversation_messages_conversation_workspace_fk",
+    "conversation_messages_author_user_workspace_fk",
+    "conversation_notes_conversation_workspace_fk",
+    "conversation_notes_author_user_workspace_fk",
+    "conversation_reads_conversation_workspace_fk",
+    "conversation_reads_user_workspace_fk",
+    "inbox_notifications_user_workspace_fk",
+    "inbox_notifications_conversation_workspace_fk",
     "journal_lines_entry_workspace_fk", "journal_lines_account_workspace_fk",
   ];
   const constraints = await sql`

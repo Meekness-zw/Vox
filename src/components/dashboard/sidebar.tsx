@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 const nav = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/dashboard/agents", label: "Agents", icon: Bot },
-  { href: "/dashboard/conversations", label: "Conversations", icon: MessagesSquare },
+  { href: "/dashboard/conversations", label: "Team Inbox", icon: MessagesSquare },
   { href: "/dashboard/appointments", label: "Appointments", icon: CalendarClock },
   { href: "/dashboard/invoices", label: "Invoices", icon: Receipt },
   { href: "/dashboard/documents", label: "Documents", icon: Files },
@@ -80,7 +80,11 @@ export function Sidebar({
 
   const isActive = (href: string, exact?: boolean) =>
     exact ? pathname === href : pathname === href || pathname.startsWith(href + "/");
-  const visibleNav = nav.filter((item) => item.href !== "/dashboard/business" || ["Owner", "Admin", "Bookkeeper"].includes(role ?? ""));
+  const visibleNav = nav.filter((item) => {
+    if (item.href === "/dashboard/business") return ["Owner", "Admin", "Bookkeeper"].includes(role ?? "");
+    if (item.href === "/dashboard/conversations") return ["Owner", "Admin", "Agent"].includes(role ?? "");
+    return true;
+  });
   const adminNav = admin ? [
     { href: "/dashboard/admin/operations", label: "Operations", icon: Activity },
     { href: "/dashboard/admin/clients", label: "Users", icon: UsersRound },
